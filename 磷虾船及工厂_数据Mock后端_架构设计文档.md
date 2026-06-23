@@ -5,7 +5,7 @@
 | 文档版本 | v1.0 |
 | 日期 | 2026-06-22 |
 | 适用范围 | 磷虾船 + 连云港工厂 可视化大屏的数据对接后端 |
-| 技术栈 | Python 3.11+ / FastAPI；无数据库、无状态 |
+| 技术栈 | Python 3.11+ / FastAPI；计算型无状态，真实数据接 SQLite / TimescaleDB / RTSP |
 | 状态 | 设计定稿，待开发 |
 
 ---
@@ -34,8 +34,10 @@
 - 不实现原文档要求的六个胖接口，也不做兼容它们的"组合模板层"。
 - 不做展示层（不拼 ECharts option、不把单位拼进数值字符串）。
 - 不做 admin / 控制接口（重置种子、注入数据等）。
-- 不接真实传感器（仅预留扩展位）。
 - 不做鉴权、分页、限流（演示系统不需要）。
+- 不承载视频转码/合成；监控视频由内置流媒体服务循环推流（见 7.3、8.5）。
+
+> 范围说明：部分指标已接入**真实数据源**——连云港工厂天气来自 open-meteo、磷虾船航行/天气来自远程 TimescaleDB；监控视频走 RTSP。其余指标仍为造数（computed）。真实数据接入的统一抽象见第 7.3 节。
 
 ---
 
@@ -68,24 +70,33 @@ value(指标, t) = f(seed(指标, t_grid))
 - **事实（Fact）**：随时间变化、可由规则计算的数值序列。例：温度、产量、能耗、航速、库存量。→ 走 `fact` 接口。
 - **维度（Dimension）**：人工编排的主数据，不可计算。例：人员、设备、专利、监控地址、商品、仓库、溯源批次图。→ 走 `dim` 接口。
 
-### 2.4 取数三级回退
+### 2.4 取数回退 · source 抽象
 
-每个事实值的解析顺序固定为：
+每个指标在注册表里声明它的 **source**（数据来源）。事实值的解析顺序固定为：
 
 ```
-1. override 命中？     → 返回配置中的覆盖/冻结值      （剧情注入 & 历史冻结）
-2. 该指标标记真实源且可用？→ 拉真实数据                  （现阶段为空，未来扩展位）
-3. 否则                → 按规则计算                     （函数底座）
+1. override 命中？  → 返回配置中的覆盖/冻结值        （剧情注入 & 历史冻结）
+2. 否则             → 调用该指标的 source provider   （computed / sqlite / timescaledb）
 ```
 
-`overrides` 一物两用：既能为演示注入"剧情"（如某天某设备故障），也能把某段历史"钉死"为固定值。
+`source` 不再区分"造数"与"真实"两个层级，而是统一为 provider 的不同种类——`computed`（规则造数，无状态）只是其中一种。各 provider 的实现见第 7.3 节。
+
+`overrides` 一物两用：既能为演示注入"剧情"（如某天某设备故障），也能把某段历史"钉死"为固定值；对 provider 型指标，还可作为数据源不可用时的兜底。
 
 ### 2.5 无数据库 · 无状态
 
-系统不存在"运行时被修改且需重启后保留"的可变状态：无写接口、无 admin、无用户数据、无昂贵到必须缓存的计算（累计型走闭式求值，O(1)）。因此**不引入任何数据库**。全部数据来自：
+**计算型（computed）指标**不存在"运行时被修改且需重启后保留"的可变状态：无写接口、无 admin、无用户数据、无昂贵到必须缓存的计算（累计型走闭式求值，O(1)）。这部分数据来自：
 
 - 配置文件（指标注册表、维度数据、overrides、渔季、编号规则）→ 启动时加载进内存。
 - 事实值 → 纯函数即时计算。
+
+**边界（接入真实数据后）**：持久化只为 provider 型指标引入，且范围最小——
+
+- 工厂天气（open-meteo）需要一个本地 **SQLite** 落地库 + 一个采集任务；
+- 船舶航行/天气走远程 **TimescaleDB**（外部进程已在写），本地不落库；
+- 计算型指标依旧无库、无状态。
+
+详见第 7.3 节。
 
 ---
 
@@ -106,7 +117,7 @@ value(指标, t) = f(seed(指标, t_grid))
                 │
 ┌───────────────▼─────────────────────────────────────────────┐
 │  取数解析器 Resolver                                         │
-│    override → (未来)真实源 provider → 规则                   │
+│    override → source provider (computed/sqlite/timescaledb)  │
 └───────────────┬─────────────────────────────────────────────┘
                 │
 ┌───────────────▼─────────────────────────────────────────────┐
@@ -416,18 +427,18 @@ C(t) = 速率基线 × 网格数(起点, t) + 季节漂移(t) + 种子微扰(t)
 
 ## 7. 取数解析器（Resolver）
 
-### 7.1 三级回退
+### 7.1 回退与分发
 
 ```python
-def resolve(key: str, t_grid: datetime):
-    if (ov := overrides.hit(key, t_grid)) is not None:
-        return ov                          # ① 覆盖/冻结
-    # ② 未来真实源 provider（现为空）
-    rule = registry[key].rule
-    return GENERATORS[rule.kind](rule.params, key, t_grid)   # ③ 规则
+def resolve(key, start, end):
+    spec = registry[key]
+    if (ov := overrides.hit(key, start, end)) is not None:
+        return ov                                  # ① 覆盖/冻结/兜底
+    provider = PROVIDERS[spec.source.kind]          # computed / sqlite / timescaledb
+    return provider.fetch(spec, start, end)         # ② 统一 provider 接口
 ```
 
-未来某指标接真实数据时，仅为它注册一个真实源 provider（自带存储），第②级即生效，`fact/dim/meta` 与规则层均不改动。
+`computed` provider 内部即为造数：按网格枚举 `t_grid`、`GENERATORS[rule.kind](...)` 逐点求值。新增一种数据来源 = 实现一个 provider 并注册 `kind`，`fact/dim/meta` 与上层均不改动。
 
 ### 7.2 时间语义
 
@@ -440,6 +451,94 @@ def resolve(key: str, t_grid: datetime):
 | `start`、`end` 均空 | 即时 | 取 ≤ now 的最近网格点（单元素 `values`） |
 
 > 超长区间的点数控制（采样/最大点数）现阶段不实现；将来可加可选参数 `max_points`，不破坏现有契约。
+
+### 7.3 数据源 Provider（真实数据接入）
+
+所有数据来源都实现同一个接口，Resolver 不感知差异：
+
+```python
+class SourceProvider(Protocol):
+    def fetch(self, spec, start, end) -> list[Point]: ...
+    # Point = { "time": str, "value": Number|str|bool }
+```
+
+当前三种 provider：
+
+| source.kind | 用途 | 取数方式 | 是否落本地库 | 采集任务 |
+|---|---|---|---|---|
+| `computed` | 绝大多数船/厂指标 | 规则即时计算（纯函数） | 否 | 无 |
+| `sqlite` | 连云港工厂天气 | 直查本地 SQLite | 是 | open-meteo 定时采集 |
+| `timescaledb` | 磷虾船航行/天气 | 直查远程 TimescaleDB（透传） | 否（外部已写） | 无（外部进程负责） |
+
+#### 7.3.1 工厂天气：open-meteo → SQLite → 直查
+
+- **采集任务**（独立调度，如每小时）：调用 open-meteo API 拉取连云港坐标的真实天气，**upsert** 进本地 SQLite `weather` 表；首次可用 open-meteo 历史归档 API 回填过去区间。
+- **取数**：`fact` 命中 `sqlite` provider，按时间范围直接 `SELECT` SQLite，无需联网。
+- **历史**：随采集自然累积，且不受 open-meteo 限流/可用性影响。
+
+```yaml
+- key: 连云港工厂.天气.温度
+  种类: 瞬时
+  value_type: Number
+  unit: ℃
+  source: { kind: sqlite, table: weather, column: 温度 }
+  ingest:
+    provider: open-meteo
+    定位: { 纬度: 34.60, 经度: 119.22 }     # 连云港
+    interval: 1h
+    字段映射: { temperature_2m: 温度, wind_speed_10m: 风速, relative_humidity_2m: 湿度 }
+```
+
+采集任务表结构（SQLite）：
+
+```sql
+CREATE TABLE weather (
+  time TEXT NOT NULL,        -- ISO 时间
+  指标 TEXT NOT NULL,        -- 温度 / 风速 / 湿度 ...
+  value REAL,
+  PRIMARY KEY (time, 指标)
+);
+```
+
+#### 7.3.2 磷虾船航行/天气：远程 TimescaleDB 透传
+
+外部进程每 10 分钟向 TimescaleDB 写入，本系统**只读、不造数、不落本地库**。provider 持只读连接，把 `fact` 的时间范围翻译成 SQL 查询。
+
+```yaml
+- key: 磷虾船.航行.航速
+  种类: 瞬时
+  value_type: Number
+  unit: 节
+  source: { kind: timescaledb, table: ship_metrics, column: speed }
+```
+
+```python
+# timescaledb provider（示意）
+SELECT ts AS time, {column} AS value
+FROM {table}
+WHERE ts BETWEEN :start AND :end
+ORDER BY ts;
+```
+
+连接信息（host/库/账号）经环境变量/密钥配置，不写进 YAML。
+
+#### 7.3.3 监控视频：dim 维护 + RTSP 流媒体
+
+- **链接由 dim 维护**：`dim`（类型=监控）的记录里，监控地址填**本系统**的 RTSP URL（如 `rtsp://<本机>:8554/cam-甲板`），从而"可查看、由本系统提供"。
+- **底层推流**：内置一个流媒体服务（如 MediaMTX / rtsp-simple-server），把一段循环片源以 RTSP 持续推出；每个监控 ID 对应一路。
+- **单独的视频接口**：另给前端一个列表接口（见 8.5），返回各监控的 RTSP 地址与元数据，便于大屏取流。
+
+```yaml
+监控:
+  - 监控ID: cam-甲板
+    监控名称: 甲板监控
+    rtsp: "rtsp://{host}:8554/cam-甲板"     # 由本系统流媒体服务提供
+    片源: assets/loop_deck.mp4               # 循环推流的本地片源
+```
+
+#### 7.3.4 兜底策略
+
+provider 型指标在数据源不可用时的回落顺序：`override 兜底值 → 最近一次成功值 → （可选）computed 造数`。具体策略可按指标配置，保证演示不开天窗。
 
 ---
 
@@ -599,6 +698,27 @@ def resolve(key: str, t_grid: datetime):
 }
 ```
 
+### 8.5 `GET /api/surveillance` — 监控视频清单
+
+返回各监控的 RTSP 地址与元数据，供前端大屏取流播放。地址由本系统的流媒体服务提供（见 7.3.3），底层为循环片源。视频字节本身**不经此接口**，由播放器直连 RTSP。
+
+```jsonc
+// resp
+{
+  "status": 200,
+  "data": {
+    "监控": [
+      { "监控ID": "cam-甲板", "监控名称": "甲板监控",
+        "rtsp": "rtsp://demo-host:8554/cam-甲板", "所属": "磷虾船" },
+      { "监控ID": "cam-虾油车间", "监控名称": "虾油车间",
+        "rtsp": "rtsp://demo-host:8554/cam-虾油车间", "所属": "连云港工厂" }
+    ]
+  }
+}
+```
+
+> 这些记录也可由 `dim`（类型=监控）返回；`/api/surveillance` 是给前端的便捷专用清单。RTSP 路数与片源在 `dimensions.yaml` 的"监控"段维护。
+
 ---
 
 ## 9. 端到端样例
@@ -629,7 +749,7 @@ POST /api/fact
 spec = registry["磷虾船.海水温度"]
 points = []
 for t in grid_range("2026-06-18 00:00:00", "2026-06-18 23:59:59", spec.grid):  # 每3min一个点
-    v = resolve("磷虾船.海水温度", t)        # override→真实源→规则
+    v = resolve("磷虾船.海水温度", t)        # override→provider(此例为 computed)
     points.append({"time": fmt(t), "value": round(v, 2)})
 ```
 
@@ -660,32 +780,44 @@ for t in grid_range("2026-06-18 00:00:00", "2026-06-18 23:59:59", spec.grid):  #
 ## 10. 技术选型与项目结构
 
 - **语言/框架**：Python 3.11+ / FastAPI（异步、自带 OpenAPI、入参校验）。
-- **运行**：uvicorn 单进程即可；无数据库、无外部依赖。
+- **运行**：uvicorn 单进程；计算型零依赖。工厂天气需本地 SQLite + 采集任务；船舶数据需远程 TimescaleDB 只读连接；监控视频需一个流媒体服务（MediaMTX）。
 - **配置加载**：启动读取 `config/*.yaml` 进内存；可选热重载（重读 YAML）。
+- **密钥/连接**：TimescaleDB 连接、open-meteo（如需）等经环境变量注入，不写进 YAML。
 
 ```
 krill-mock-backend/
 ├── config/
-│   ├── metrics.yaml          # 指标注册表
-│   ├── dimensions.yaml       # 维度数据
+│   ├── metrics.yaml          # 指标注册表（含 source / ingest 声明）
+│   ├── dimensions.yaml       # 维度数据（含监控 RTSP 配置）
 │   ├── season.yaml           # 渔季
 │   ├── coding.yaml           # 编号规则（预设，待调整）
-│   └── overrides.yaml        # 覆盖/冻结
+│   └── overrides.yaml        # 覆盖/冻结/兜底
 ├── app/
 │   ├── registry.py           # 配置加载 → 内存 Registry
-│   ├── generators/           # 造数层：规则函数库
+│   ├── generators/           # computed provider 的规则函数库
 │   │   ├── __init__.py       # GENERATORS 分发表
 │   │   ├── baseline.py       # 基线_季节_噪声
 │   │   ├── cumulative.py     # 累计
 │   │   ├── track.py          # 轨迹
 │   │   └── discrete.py       # 离散状态
-│   ├── resolver.py           # 三级回退取数 + 种子
+│   ├── providers/            # source provider（统一 fetch 接口）
+│   │   ├── __init__.py       # PROVIDERS 分发表
+│   │   ├── computed.py       # 规则造数
+│   │   ├── sqlite.py         # 直查本地 SQLite（工厂天气）
+│   │   └── timescaledb.py    # 直查远程 TimescaleDB（船舶）
+│   ├── ingest/               # 采集任务
+│   │   └── open_meteo.py     # 拉 open-meteo → 写 SQLite（定时调度）
+│   ├── resolver.py           # override → provider
 │   ├── timegrid.py           # 网格对齐、区间枚举、时间语义
 │   ├── services/
 │   │   ├── fact.py
 │   │   ├── dim.py
-│   │   └── meta.py
+│   │   ├── meta.py
+│   │   └── surveillance.py   # 监控视频清单
 │   └── api.py                # FastAPI 路由 + 响应包络
+├── assets/                   # 监控循环片源（mp4）
+├── data/                     # 本地 SQLite（工厂天气落地）
+├── mediamtx.yml              # 流媒体服务配置（RTSP 推流循环片源）
 └── main.py
 ```
 
@@ -696,8 +828,8 @@ krill-mock-backend/
 - **增删改指标**：编辑 `metrics.yaml`，不动代码。
 - **新增数据形态**：在 `generators/` 写一个规则函数并注册 `kind`。
 - **增删改维度**：编辑 `dimensions.yaml`。
-- **新增接口/对外服务**：在现有 `fact / dim / meta` 之上即可满足绝大多数；确需新接口时，按同样的"服务 + 路由"模式增加，复用 Resolver 与造数层。
-- **接入真实数据**（未来"两者皆有"）：为目标指标注册真实源 provider（自带存储），Resolver 第②级生效，其余零改动。
+- **新增接口/对外服务**：在现有 `fact / dim / meta` 之上即可满足绝大多数；确需新接口时（如 `surveillance`），按同样的"服务 + 路由"模式增加，复用 Resolver 与 provider。
+- **接入新数据源**：在 `providers/` 实现一个 `SourceProvider` 并注册 `kind`，再把目标指标的 `source.kind` 指过去即可，`fact/dim/meta` 与前端零改动。已落地 `computed / sqlite / timescaledb` 三种。
 
 ---
 
@@ -713,8 +845,18 @@ krill-mock-backend/
 | 磷虾船历史 `/krill-ship/history` | `fact`（历史区间）多 key + `dim`（专利/设备/人员/航迹） |
 | 工厂当天 `/factory/today` | `fact` + `dim` |
 | 工厂历史 `/factory/history` | `fact` + `dim` |
+| 监控视频 | `dim`（类型=监控）+ `GET /api/surveillance`（RTSP 清单） |
 
 原"一次性返回所有"由前端按需组合多次 `fact`/`dim` 调用实现。
+
+### 12.3 数据源一览
+
+| 数据 | source | 取数 | 历史 |
+|---|---|---|---|
+| 多数船/厂指标 | `computed` | 规则即时计算 | 随查随算 |
+| 连云港工厂天气 | `sqlite` | 直查本地 SQLite（open-meteo 定时采集真实数据写入） | SQLite 累积 + 归档回填 |
+| 磷虾船航行/天气 | `timescaledb` | 直查远程 TimescaleDB（外部进程每 10min 写） | TSDB 自带 |
+| 监控视频 | dim + 流媒体 | RTSP 取流（MediaMTX 循环推片源） | 不适用 |
 
 ### 12.2 待确认 / 将来调整项
 
@@ -725,6 +867,9 @@ krill-mock-backend/
 | 各指标规则参数 | 设计期给合理默认 | 视演示效果调参 |
 | 超长区间采样 | 暂不实现 | 需要时加 `max_points`，不破坏契约 |
 | 前端对齐 | 默认前端接受通用接口 | 若前端坚持原六接口，再评估组合层 |
+| TimescaleDB 表结构 | 待对接 | 需外部进程方提供表名/字段/时间列，映射进 `metrics.yaml` |
+| open-meteo 字段映射 | 初版按常用字段 | 按实际需要的天气要素增减 |
+| 监控片源与路数 | 待提供 | 片源 mp4 与摄像头清单进 `dimensions.yaml` / `assets/` |
 
 ---
 
