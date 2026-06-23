@@ -34,10 +34,10 @@
 
 ### 2.2 限界上下文（Bounded Context）
 
-1. **指标供给上下文（Metric Serving）**——核心。以 `指标` 为聚合，处理 fact 查询、时间语义、`override → provider` 取数编排。定义 `数据源 Provider` 端口。
+1. **指标供给上下文（Metric Serving）**——核心。以 `指标` 为聚合，处理 series 查询、时间语义、`override → provider` 取数编排。定义 `数据源 Provider` 端口。
 2. **造数上下文（Generation）**——核心。`computed` provider 的内部领域：生成规则、相干噪声、规则原语库。是供给上下文的"供应方"之一。
 3. **溯源上下文（Traceability）**——以 `批次` 为聚合根，溯源类别/环节链/递归原料/产品检验。
-4. **维度上下文（Dimension）**——人员、设备、专利、监控、商品、仓储等主数据聚合。
+4. **记录上下文（Records，主数据）**——人员、设备、专利、监控、商品、仓储等结构化记录聚合（按标识/条件检索）。
 5. **真实数据接入上下文（Real-Data Integration）**——open-meteo 采集 + SQLite 落地、TimescaleDB 只读透传；对外部数据模型做防腐。是供给上下文的另一类"供应方"。
 6. **监控视频上下文（Surveillance）**——摄像头清单 + RTSP 地址供给，对 MediaMTX 防腐。
 7. **配置上下文（Configuration）**——共享内核：渔季、单位、地理点、批次编号等通用语言载体，及各上下文的配置仓储来源。
@@ -63,7 +63,7 @@
                                           └─────────────────┘
 
    ┌───────────────┐  Shared Kernel: 批次编号   ┌───────────────┐
-   │ 溯源上下文     │◄──────────────────────────►│ 维度上下文     │
+   │ 溯源上下文     │◄──────────────────────────►│ 记录上下文     │
    │ (Batch 聚合)   │                            │ (含 仓储/物流) │
    └───────────────┘                            └───────────────┘
 
@@ -124,7 +124,7 @@
 - **〔VO〕TimeRange**：`start/end`，不变式 `start ≤ end`；语义分点查/区间/即时。
 - **〔VO〕Grid**：网格粒度（3min/1h/1d…）。
 - **〔VO〕DataPoint**：`{time, value}`；value 为 `Number/String/Boolean`。
-- **〔VO〕TimeSeries**：`{type, unit, values[]}`，fact 的返回载体。
+- **〔VO〕TimeSeries**：`{type, unit, values[]}`，series 的返回载体。
 - **〔VO〕SourceRef**：`{kind, params}`，指向某 Provider。
 - **〔E/VO〕Override**：`{metricKey, range, value}`；策略对象 OverridePolicy 决定命中。
 - **〔P〕DataSourceProvider**：`fetch(metric, range) -> TimeSeries`。**这是本上下文对外发布的语言**，由造数/真实数据接入实现。
@@ -143,8 +143,9 @@
 - **〔VO〕Envelope 包络**：趋势/季节的确定性闭式。
 - **〔DS〕GenerationEngine 造数引擎**：`generate(rule, key, t) -> value`，纯函数、无状态。
 - **〔DS〕RulePrimitive 规则原语**（策略族）：有界瞬时 / 累计 / 离散状态 / 航迹派生 等，每个是 `GenerationEngine` 的一个策略。
+- **〔VO〕MetricDependency 指标依赖图**：一个指标的规则可引用其它指标，构成有向无环图；`GenerationEngine` 在同一 `t` 递归求值并记忆化，用于实现指标间硬约束（按构造派生，详见造数引擎文档 §5.2）。
 
-不变式：相同 `(key, t)` 恒返回相同 `value`（可复现）；累计型满足单调（速率基线 > 漂移最大斜率）；派生量（航向/航速）与位置函数自洽。
+不变式：相同 `(key, t)` 恒返回相同 `value`（可复现）；累计型满足单调（速率基线 > 漂移最大斜率）；派生量（航向/航速）与位置函数自洽；**指标依赖图必须无环**。
 
 ### 3.3 溯源上下文（Traceability）
 
@@ -163,14 +164,14 @@
 
 不变式：溯源链的环节与顺序须**符合其类别的定义**；`MaterialSource.原料溯源` 引用的上游批次必须存在；递归终止于无上游或达到深度上限。
 
-### 3.4 维度上下文（Dimension）
+### 3.4 记录上下文（Records，主数据）
 
 - **〔AR〕Person 人员**：身份=人员编号/姓名。标量：姓名、电话；时序属性：职务、所在位置、类型、是否在岗。
   - **〔VO〕TemporalValue**：`{time, value}`。
   - **〔VO〕TemporalAttribute**：`TemporalValue` 升序序列（不变式：时间升序）。
 - **〔AR〕Equipment 设备**：名称、所属工艺流程/阶段、状态、温度。
 - **〔AR〕Patent 专利**、**〔AR〕Product 商品**、**〔AR〕StorageRecord 仓储记录**（物流，见 3.5）。
-- **〔R〕DimensionRepository**：按类型 + filter 查询；人员时序属性整段返回。
+- **〔R〕RecordRepository**：按类型 + filter 查询；人员时序属性整段返回。
 
 不变式：时序属性时间升序；仓储记录字段齐备（9 字段）。
 
@@ -230,7 +231,7 @@
 
 ## 5. 领域事件与 CQRS
 
-- 系统**读重写轻**：fact/dim/trace/surveillance 全是查询（读模型）。
+- 系统**读重写轻**：series/records/trace/surveillance 全是查询（读模型）。
 - 写侧仅两处：① 配置编排（人工维护维度/规则/渔季/覆盖）——本质是模型装载；② 天气采集任务——产生少量领域事件。
 - 唯一显著领域事件：**`WeatherIngested`**（采集批次写入完成）。其余上下文无状态变更，故无需事件溯源、无需复杂一致性协议。
 - 这一性质决定：不引入消息总线、不做 CQRS 框架；读模型即领域模型本身，命令侧极薄。
@@ -242,9 +243,9 @@
 | 层 | 内容 |
 |---|---|
 | **领域层** | 聚合（Metric/Batch/Person/Camera…）、值对象、领域服务（Resolver、GenerationEngine、TraceabilityAssembler、SurveillanceCatalog） |
-| **应用层** | 用例：QueryFact、QueryDimension、QueryTraceability、ListSurveillance、RunWeatherIngestion |
+| **应用层** | 用例：QuerySeries、QueryRecords、QueryTraceability、ListSurveillance、RunWeatherIngestion |
 | **端口（Ports）** | DataSourceProvider、各 Repository、OpenMeteoClient、TimescaleDbPort、StreamingServerPort |
-| **适配器（Adapters）** | 入站：FastAPI 控制器（fact/dim/meta/surveillance）；出站：YAML 配置仓储、SQLite 仓储、Timescale 适配器、open-meteo HTTP 客户端、MediaMTX 适配器 |
+| **适配器（Adapters）** | 入站：FastAPI 控制器（series/records/surveillance）；出站：YAML 配置仓储、SQLite 仓储、Timescale 适配器、open-meteo HTTP 客户端、MediaMTX 适配器 |
 
 依赖方向：适配器 → 应用层 → 领域层；领域层只依赖端口接口，不依赖具体技术。
 
@@ -259,7 +260,7 @@ app/
 ├── serving/         # 指标供给上下文：metric, resolver, provider 端口, registry
 ├── generation/      # 造数上下文：engine, rules（原语库）= computed provider
 ├── traceability/    # 溯源上下文：batch 聚合, assembler, repository
-├── dimension/       # 维度上下文：person/equipment/...、仓储
+├── records/         # 记录上下文：person/equipment/...、仓储
 ├── integration/     # 真实数据接入：open-meteo 采集, sqlite/timescaledb provider, ACL
 ├── surveillance/    # 监控视频上下文：camera, catalog, mediamtx 适配
 ├── shared/          # 共享内核：FishingSeason, Unit, GeoPoint, BatchNumber, DataPoint
@@ -277,7 +278,7 @@ app/
 | 指标供给 | Metric | MetricKey/TimeRange/DataPoint/TimeSeries/SourceRef | Resolver | DataSourceProvider |
 | 造数 | （无状态） | RuleSpec/Seed/NoiseField/Envelope | GenerationEngine、规则原语 | 实现 DataSourceProvider |
 | 溯源 | Batch | BatchNumber/TraceChain/MaterialSource/GeoPoint | TraceabilityAssembler | BatchRepository |
-| 维度 | Person/Equipment/Patent/Product | TemporalAttribute/TemporalValue | — | DimensionRepository |
+| 记录（主数据） | Person/Equipment/Patent/Product | TemporalAttribute/TemporalValue | — | RecordRepository |
 | 物流（仓储） | StorageRecord | BatchNumber(共享)/ProductInspection | — | （并入维度） |
 | 真实数据接入 | WeatherReading/IngestionJob | — | WeatherIngestionService/TimescaleQueryService | OpenMeteoClient/TimescaleDbAdapter |
 | 监控视频 | Camera | RTSP 地址 | SurveillanceCatalog | StreamingServerPort(MediaMTX) |
