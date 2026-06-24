@@ -39,8 +39,12 @@ def main():
     show("B 溯源/QZXF-001", b)
     assert b["status"] == 200 and len(b["data"]) == 1
     assert b["data"][0]["value"]["类别"] == "全脂虾粉溯源"
-    assert "磷虾捕捞" in b["data"][0]["value"]["溯源链条"]   # 数据归各环节
-    passed.append("B 端到端(溯源链条/环节)")
+    chain = b["data"][0]["value"]["溯源链条"]
+    assert isinstance(chain, list), "溯源链条应为有序数组"
+    assert chain[0]["环节"] == "磷虾捕捞" and chain[-1]["环节"] == "产品检测"   # 顺序：捕捞→…→检测
+    assert "直接蒸煮器加热温度" in chain[1]                                    # 环节带具体值，非内部key引用
+    assert not any("引用" in seg for seg in chain), "不应再有内部 key 引用"
+    passed.append("B 溯源(有序数组+具体值,无内部引用)")
 
     # C 有界瞬时（点查 + 区间 + 确定性 + 区间断言）
     c1 = resolve(reg, "船舶.能耗.剩余燃油", time=T)

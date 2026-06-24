@@ -236,7 +236,8 @@ def resolve(reg, key, filter=None, time=None, start=None, end=None):
                                 rk = k2
                     rsub = ref[len(rk) + 1:] if rk and ref != rk else None
                     vf = lambda dt, rk=rk, rsub=rsub: _c_point(reg, rk, dt, 指标=rsub) if rk else None
-                    data[name] = {"单位": m.get("单位"), "引用": ref,
+                    # 引用解析为实际值返回（同一实时事实，不复制）；不向外暴露内部 key
+                    data[name] = {"单位": m.get("单位"),
                                   "values": _emit(reg, key, vf, dt_point, rng, gmin)}
                 else:
                     data[name] = {"note": "占位/说明项，未配置规则"}
