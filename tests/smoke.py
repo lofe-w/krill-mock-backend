@@ -35,8 +35,8 @@ def main():
     passed.append("A 端到端")
 
     # B
-    b = resolve(reg, "溯源", filter={"商品编号": "QZXF-001"})
-    show("B 溯源/QZXF-001", b)
+    b = resolve(reg, "溯源", filter={"产品批号": "2606AKM01"})
+    show("B 溯源/2606AKM01", b)
     assert b["status"] == 200 and len(b["data"]) == 1
     assert b["data"][0]["value"]["类别"] == "全脂虾粉溯源"
     chain = b["data"][0]["value"]["溯源链条"]

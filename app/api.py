@@ -73,13 +73,23 @@ class SeriesQ(BaseModel):
 
 
 def _filter_for(filter: Optional[Dict], key: str):
+    """B 表过滤：filter 按 key 作用域，形如 {key: {字段: 值}}（domain §8 批量语义）。
+    形状由 _validate_records_filter 保证，这里直接取本 key 的过滤条件。"""
+    return (filter or {}).get(key)
+
+
+def _validate_records_filter(filter: Optional[Dict]):
+    """/api/records 是批量接口（keys:[...]）+ 单个共享 filter，故 filter 必须按 key 作用域：
+    {key: {字段: 值}}。每个顶层项都得是已注册 key、值是该 key 的过滤条件对象；
+    否则 400，避免无作用域的过滤条件被静默套到所有 key（或退化成不过滤、返回全部）。"""
     if not filter:
-        return None
-    if key in filter and isinstance(filter[key], dict):
-        return filter[key]
-    if any(k in REG.keys for k in filter):
-        return None
-    return filter
+        return
+    bad = [k for k in filter if k not in REG.keys or not isinstance(filter[k], dict)]
+    if bad:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"filter 须按 key 作用域，形如 {{\"<key>\": {{字段: 值}}}}；"
+                    f"以下顶层项不是已注册 key 或值非对象：{bad}。"))
 
 
 def _指标_for(指标, key):
@@ -88,6 +98,10 @@ def _指标_for(指标, key):
     if isinstance(指标, dict):
         return 指标.get(key)
     return 指标
+
+
+# 表 → 对外接口（与 _wrap 的 A→/value、B→/records、C→/series 一致）
+_接口_BY_表 = {"A": "/api/value", "B": "/api/records", "C": "/api/series"}
 
 
 def _wrap(key, r, want_table):
@@ -110,6 +124,7 @@ def api_value(q: ValueQ):
 
 @app.post("/api/records", dependencies=[Depends(require_app)])
 def api_records(q: RecordsQ):
+    _validate_records_filter(q.filter)
     data = {}
     for k in q.keys:
         r = _wrap(k, resolve(REG, k, filter=_filter_for(q.filter, k)), "B")
@@ -146,7 +161,9 @@ def health():
 # —— 运维侧 ——
 @app.get("/api/keys", dependencies=[Depends(require_ops)])
 def list_keys():
-    return {"status": 200, "data": [{"key": k, "表": s.get("表"), "成熟度": s.get("成熟度")}
+    return {"status": 200, "data": [{"key": k, "表": s.get("表"),
+                                     "接口": _接口_BY_表.get(s.get("表")),
+                                     "成熟度": s.get("成熟度")}
                                     for k, s in REG.keys.items()]}
 
 
