@@ -8,6 +8,8 @@ services:
     container_name: krill-mock-api
     ports:
       - "8000:8000"
+    env_file:
+      - .env                          # 注入 AUTH_ENABLED / API_TOKEN_APP / API_TOKEN_OPS / CORS_ORIGINS
     volumes:
       # 挂 config 进去：改完 config/*.yaml 调 POST /api/reload 即生效，无需重启
       - ./config:/app/config:ro
@@ -18,11 +20,19 @@ services:
       timeout: 5s
       retries: 3
 
-  # —— 将来随真实源就绪再加（当前全 Fake，无需启动）——
-  # mediamtx:           # 监控视频：RTSP 循环推流，返回地址（domain §7 真值采集·视频）
-  #   image: bluenviron/mediamtx:latest
-  #   ports: ["8554:8554"]
-  #   volumes: ["./assets:/assets", "./mediamtx.yml:/mediamtx.yml"]
+  # 监控视频：把 assets/streams/<监控ID>.mp4 循环推成 RTSP/HLS（片源命名见 assets/streams/README.md）
+  mediamtx:
+    image: bluenviron/mediamtx:latest-ffmpeg     # 自带 ffmpeg
+    container_name: krill-mediamtx
+    ports:
+      - "8554:8554"     # RTSP
+      - "8888:8888"     # HLS（浏览器大屏）
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+      - ./assets/streams:/streams:ro
+    restart: unless-stopped
+
+  # —— 将来随真实源就绪再加 ——
   # weather-ingest:     # 工厂天气：open-meteo 采集落本地 SQLite（domain §7 真值采集·天气）
   #   build: .
   #   command: ["python", "-m", "app.ingest.open_meteo"]

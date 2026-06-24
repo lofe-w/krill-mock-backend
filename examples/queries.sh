@@ -3,10 +3,12 @@
 # 用法：bash examples/queries.sh
 set -e
 H="${1:-http://localhost:8000}"
+# 使用侧 Token：与 .env 的 API_TOKEN_APP 一致（AUTH_ENABLED=false 时可留空）
+APP="${APP_TOKEN:-请填使用侧Token}"
 pp() { python3 -m json.tool --no-ensure-ascii 2>/dev/null || cat; }
-post() { echo -e "\n### $1"; curl -s -X POST "$H$2" -H 'Content-Type: application/json' -d "$3" | pp; }
+post() { echo -e "\n### $1"; curl -s -X POST "$H$2" -H 'Content-Type: application/json' -H "Authorization: Bearer $APP" -d "$3" | pp; }
 
-echo "### 健康+自检（selfcheck_ok=true, keys≈58, derivations=5）"; curl -s "$H/api/health" | pp
+echo "### 健康+自检（公开，无需Token；selfcheck_ok=true, keys≈68, derivations=5）"; curl -s "$H/api/health" | pp
 
 # —— A 表：/api/value（批量取值）——
 post "A·value 批量：船舶信息 + 虾油线设计能力" /api/value \

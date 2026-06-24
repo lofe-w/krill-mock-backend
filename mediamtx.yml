@@ -1,0 +1,19 @@
+# MediaMTX 配置：把 assets/streams/<监控ID>.mp4 循环推成 RTSP/HLS 流。
+# 按需启动（有人取流才拉起 ffmpeg 无限循环该片源），省资源。
+# 镜像用 bluenviron/mediamtx:latest-ffmpeg（自带 ffmpeg）。
+
+rtspAddress: :8554           # RTSP 取流：rtsp://<host>:8554/<监控ID>
+hlsAddress: :8888            # HLS 给浏览器：http://<host>:8888/<监控ID>/index.m3u8
+hls: yes
+hlsAlwaysRemux: yes
+
+paths:
+  # 所有以 cam- 开头的路径：用 ffmpeg 无限循环对应 mp4 文件
+  "~^cam-.*$":
+    runOnDemand: >
+      ffmpeg -re -stream_loop -1 -i /streams/$MTX_PATH.mp4
+      -c:v libx264 -preset veryfast -tune zerolatency -an
+      -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    runOnDemandRestart: yes
+    runOnDemandCloseAfter: 30s
+# 说明：$MTX_PATH = 请求的路径名（即监控ID）；据 MediaMTX 版本，变量名/字段可能需微调。

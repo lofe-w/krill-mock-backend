@@ -1,29 +1,60 @@
 """对外接口 = 三表的外部投影，每表一个、各自批量（domain §8）。
-- POST /api/value    A：{keys:[...]}                      → {key: value}
-- POST /api/records  B：{keys:[...], filter:{key:{...}}}  → {key: [{filter,value}]}
-- POST /api/series   C：{keys:[...], time | start/end, 指标?} → {key: 序列/多指标}
-统一在实现层（一个 resolver），分形状在接口层——不把三种形状塞进一个信封。"""
-from fastapi import FastAPI
+使用侧（前端）：/api/value /api/records /api/series —— 需 使用侧 Token。
+运维侧（运维）：/api/keys /api/reload —— 需 运维侧 Token。/api/health 公开(存活探测)。
+鉴权：.env 写死两个 Token，前端/运维以 Authorization: Bearer <token> 传入。
+CORS：浏览器跨域调用需开启（见 CORS_ORIGINS）。"""
+import os
+from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
+try:
+    from dotenv import load_dotenv
+    load_dotenv()                       # 本机运行时加载 .env；docker 用 env_file 注入
+except Exception:
+    pass
 from .registry import load, selfcheck
 from .resolver import resolve
 
-app = FastAPI(title="krill-mock-backend", version="0.2-3tables")
+# —— 鉴权配置（来自环境变量）——
+AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
+TOKEN_APP = os.getenv("API_TOKEN_APP", "")      # 使用侧（前端）
+TOKEN_OPS = os.getenv("API_TOKEN_OPS", "")      # 运维侧
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+
+app = FastAPI(title="krill-mock-backend", version="0.3-auth-cors")
+app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials=True,
+                   allow_methods=["*"], allow_headers=["*"])
 REG = load()
 
 
-def _filter_for(filter: Optional[Dict], key: str):
-    """filter 支持两种写法：{key:{...}} 按 key 分；或扁平 {...} 应用到全部。"""
-    if not filter:
-        return None
-    if key in filter and isinstance(filter[key], dict):
-        return filter[key]
-    if any(k in REG.keys for k in filter):     # 是按 key 分的 map，但本 key 没给 → 不过滤
-        return None
-    return filter                              # 扁平，应用到全部
+def _bearer(authorization: Optional[str]):
+    if authorization and authorization.startswith("Bearer "):
+        return authorization[len("Bearer "):].strip()
+    return None
 
 
+def require_app(authorization: Optional[str] = Header(None)):
+    """使用侧：使用侧 Token 或运维侧 Token 均可（运维侧权限更高）。"""
+    if not AUTH_ENABLED:
+        return
+    tok = _bearer(authorization)
+    if tok and tok in (TOKEN_APP, TOKEN_OPS) and tok != "":
+        return
+    raise HTTPException(status_code=401, detail="缺少或无效的使用侧 Token（Authorization: Bearer <API_TOKEN_APP>）")
+
+
+def require_ops(authorization: Optional[str] = Header(None)):
+    """运维侧：仅运维侧 Token。"""
+    if not AUTH_ENABLED:
+        return
+    tok = _bearer(authorization)
+    if tok and tok == TOKEN_OPS and tok != "":
+        return
+    raise HTTPException(status_code=401, detail="缺少或无效的运维侧 Token（Authorization: Bearer <API_TOKEN_OPS>）")
+
+
+# —— 请求体 ——
 class ValueQ(BaseModel):
     keys: List[str]
 
@@ -38,15 +69,28 @@ class SeriesQ(BaseModel):
     time: Optional[str] = None
     start: Optional[str] = None
     end: Optional[str] = None
-    # 可选·限定多指标 C key 要哪些指标。三种写法：
-    #   "成品油产量"                                  → 单指标，应用到所有 key
-    #   ["海水温度","有义波高"]                         → 多指标，应用到所有 key
-    #   {"工厂.虾油线.生产数据":["成品油产量","虾油得率"]} → 按 key 各自给一组（推荐）
-    指标: Optional[Any] = None
+    指标: Optional[Any] = None              # str | [str] | {key:[str]}
+
+
+def _filter_for(filter: Optional[Dict], key: str):
+    if not filter:
+        return None
+    if key in filter and isinstance(filter[key], dict):
+        return filter[key]
+    if any(k in REG.keys for k in filter):
+        return None
+    return filter
+
+
+def _指标_for(指标, key):
+    if 指标 is None:
+        return None
+    if isinstance(指标, dict):
+        return 指标.get(key)
+    return 指标
 
 
 def _wrap(key, r, want_table):
-    """校验表是否匹配端点；不匹配则给出明确错误，避免误用。"""
     if r.get("status") == 404:
         return {"error": "key 未注册"}
     if r.get("表") and r["表"] != want_table:
@@ -54,7 +98,8 @@ def _wrap(key, r, want_table):
     return r
 
 
-@app.post("/api/value")
+# —— 使用侧（前端）——
+@app.post("/api/value", dependencies=[Depends(require_app)])
 def api_value(q: ValueQ):
     data = {}
     for k in q.keys:
@@ -63,7 +108,7 @@ def api_value(q: ValueQ):
     return {"status": 200, "data": data}
 
 
-@app.post("/api/records")
+@app.post("/api/records", dependencies=[Depends(require_app)])
 def api_records(q: RecordsQ):
     data = {}
     for k in q.keys:
@@ -72,16 +117,7 @@ def api_records(q: RecordsQ):
     return {"status": 200, "data": data}
 
 
-def _指标_for(指标, key):
-    """series 的指标选择：按 key 的 map 优先；否则 str/list 应用到全部。"""
-    if 指标 is None:
-        return None
-    if isinstance(指标, dict):
-        return 指标.get(key)                    # 该 key 没给 → None（全要）
-    return 指标                                 # str 或 list，应用到全部
-
-
-@app.post("/api/series")
+@app.post("/api/series", dependencies=[Depends(require_app)])
 def api_series(q: SeriesQ):
     data = {}
     for k in q.keys:
@@ -90,29 +126,31 @@ def api_series(q: SeriesQ):
         r = _wrap(k, resolve(REG, k, filter=flt, time=q.time, start=q.start, end=q.end), "C")
         if "error" in r:
             data[k] = r
-        elif "values" in r:                    # 单指标/标量型 C
+        elif "values" in r:
             data[k] = {"单位": r.get("单位"), "values": r["values"], **({"派生": r["派生"]} if "派生" in r else {})}
-        else:                                   # 多指标 C
+        else:
             data[k] = r.get("data", r)
     return {"status": 200, "data": data}
 
 
-# —— 运维/验收 ——
+# —— 公开：存活探测 ——
 @app.get("/api/health")
 def health():
     rep = selfcheck(REG)
     return {"status": 200, "keys": rep["key_count"], "by_table": rep["by_table"],
             "by_maturity": rep["by_maturity"], "selfcheck_ok": rep["ok"],
-            "unresolved": rep["unresolved"], "derivations": len(REG.derivations)}
+            "unresolved": rep["unresolved"], "derivations": len(REG.derivations),
+            "auth_enabled": AUTH_ENABLED}
 
 
-@app.get("/api/keys")
+# —— 运维侧 ——
+@app.get("/api/keys", dependencies=[Depends(require_ops)])
 def list_keys():
     return {"status": 200, "data": [{"key": k, "表": s.get("表"), "成熟度": s.get("成熟度")}
                                     for k, s in REG.keys.items()]}
 
 
-@app.post("/api/reload")
+@app.post("/api/reload", dependencies=[Depends(require_ops)])
 def reload_registry():
     global REG
     REG = load()
