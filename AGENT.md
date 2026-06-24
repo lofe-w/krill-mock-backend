@@ -79,9 +79,10 @@
 **状态**：需求齐备；模型已收敛为"两轴四角 / 三表 A/B/C 实例化 + 谱系投影"(domain.md v2.1，据前端消费方式查证，D 降为潜在扩展)；已**下沉为数据字典 + 配置与取数契约**(全量 key 实例化、注册表 schema、约束/派生层)；过程/草稿文档已清理。代码尚未开始。
 
 **下一步**：
-1. 按《配置与取数契约》落地 `config/registry/*.yaml`（每形状至少 1 个 key 端到端）+ `constraints.yaml`。
-2. 实现最小 resolver：注册表加载 → 形状分派 → 成熟度取值 → constraints 套用。
-3. 并行向相关方提《待确认清单》Q1–Q6。
+1. ✅ 已落地 `config/`（注册表 + constraints + overrides + sources，全量 key 覆盖、YAML 校验通过）。
+2. 实现最小 resolver：注册表加载 → 表分派 → 成熟度取值 → constraints 套用；先打通"规则生成(C)+人工固定(A/B)"两条主链端到端。
+3. 真值采集 provider（天气/航行海况/视频）待《待确认清单》Q3/Q5；并行提 Q1–Q6。
+4. 各 key 同构占位项（三线、工段子指标）随开发按模板补全；规则参数据演示效果标定。
 
 ---
 
@@ -97,5 +98,11 @@ krill-mock-backend/
 │   └── 02-design/
 │       ├── domain.md                 # ★唯一事实来源
 │       └── 造数引擎.md                # 实现附录
-└── (代码尚未开始)
+├── config/                               # ★配置注册表（机器可加载层，落地《配置与取数契约》）
+│   ├── README.md
+│   ├── registry/{船舶,工厂,主数据,溯源}.yaml   # 全量 key 声明（表/成熟度/规则参数）
+│   ├── constraints.yaml                   # 跨 key 约束/派生（INV-1..6）
+│   ├── overrides.yaml                     # 覆盖/冻结/兜底
+│   └── sources.yaml                       # 真值源连接（密钥走环境变量）
+└── (resolver 代码尚未开始)
 ```

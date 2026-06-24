@@ -1,0 +1,27 @@
+# 真值采集 来源连接（密钥/口令一律走环境变量，不写进本文件）
+# 依据：domain.md §7（成熟度·真值采集）/ 数据字典 §8
+# 状态：open-meteo 可先接；TimescaleDB 表结构待 Q5；RTSP 片源待提供。
+
+open-meteo:                      # 工厂天气：采集真实数据落本地 SQLite，查询直读
+  kind: http-ingest
+  定位: { 纬度: 34.60, 经度: 119.22 }     # 连云港
+  采集cron: "0 * * * *"          # 每小时采集
+  落库: { kind: sqlite, path: data/weather.db, 表: weather }
+  字段映射: { temperature_2m: 温度, relative_humidity_2m: 湿度, weather_code: 天气 }
+  历史回填: open-meteo 历史归档 API（首次拉过去区间）
+
+timescaledb:                     # 船舶航行/海况：远程库只读透传（外部进程每 10min 写）
+  kind: timescaledb-readonly
+  连接: { host: "${TSDB_HOST}", db: "${TSDB_DB}", user: "${TSDB_USER}", password: "${TSDB_PASSWORD}" }
+  表: "${TSDB_TABLE}"           # 待 Q5：表名/字段/时间列由外部进程方提供
+  时间列: ts
+  状态: 待对接（未对接前，航行/海况 key 走 fallback 规则，见 registry/船舶.yaml）
+
+mediamtx:                        # 监控视频：本地流媒体循环推流，返回 RTSP 地址
+  kind: rtsp
+  服务地址: "rtsp://<本机>:8554"
+  片源目录: assets/             # 各监控 ID 对应一段循环 mp4，待提供
+  路数: 待提供（船/厂各若干路）
+
+# 兜底策略（provider 不可用时）：override 兜底值 → 最近成功值 →（可选）规则造数
+# 具体见 overrides.yaml 与 registry 中各 key 的 fallback。
