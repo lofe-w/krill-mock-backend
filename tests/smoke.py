@@ -81,6 +81,19 @@ def main():
     assert ov["status"] == 200
     passed.append("B 设备台账多记录")
 
+    # 派生：虾油得率应≈18%（金蝶真实出油率，=成品油/虾粉）
+    d = resolve(reg, "工厂.虾油线.生产数据", filter={"指标": "虾油得率"}, time=T)
+    yv = d["data"]["虾油得率"]["values"][0]["value"]
+    show("派生 虾油得率", d["data"]["虾油得率"])
+    assert 13 <= yv <= 27, f"得率 {yv} 不在真实区间"
+    passed.append(f"派生·虾油得率={yv}%(真实出油率)")
+
+    # 引用：车间外大气.温度 == 工厂.天气.温度（不复制）
+    ref = resolve(reg, "工厂.虾油线.生产数据", filter={"指标": "车间外大气.温度"}, time=T)
+    src = resolve(reg, "工厂.天气", filter={"指标": "温度"}, time=T)
+    assert ref["data"]["车间外大气.温度"]["values"][0]["value"] == src["data"]["温度"]["values"][0]["value"]
+    passed.append("引用·车间外大气→天气(同值不复制)")
+
     print("\n" + "=" * 50)
     for p in passed:
         print("  ✅", p)

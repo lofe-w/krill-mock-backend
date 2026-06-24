@@ -1,52 +1,51 @@
 #!/usr/bin/env bash
-# 验收用例：逐条打到本地服务，肉眼核对。先 `docker compose up -d --build`。
+# 验收用例：三个专用接口（/api/value /records /series）。先 `docker compose up -d --build`。
 # 用法：bash examples/queries.sh
 set -e
 H="${1:-http://localhost:8000}"
 pp() { python3 -m json.tool --no-ensure-ascii 2>/dev/null || cat; }
-q() { echo -e "\n### $1"; shift; curl -s "$@" | pp; }
+post() { echo -e "\n### $1"; curl -s -X POST "$H$2" -H 'Content-Type: application/json' -d "$3" | pp; }
 
-q "健康 + 自检（应 selfcheck_ok=true，keys≈58）" "$H/api/health"
+echo "### 健康+自检（selfcheck_ok=true, keys≈58, derivations=5）"; curl -s "$H/api/health" | pp
 
-q "A 船舶信息（应 IMO=9849332）" \
-  -X POST "$H/api/query" -H 'Content-Type: application/json' -d '{"key":"船舶.信息"}'
+# —— A 表：/api/value（批量取值）——
+post "A·value 批量：船舶信息 + 虾油线设计能力" /api/value \
+  '{"keys":["船舶.信息","工厂.虾油线.设计能力"]}'
 
-q "A 虾油线设计能力" \
-  -X POST "$H/api/query" -H 'Content-Type: application/json' -d '{"key":"工厂.虾油线.设计能力"}'
+# —— B 表：/api/records（批量，可按 key 分别给 filter）——
+post "B·records 批量：溯源(虾油) + 仓储(工厂冷库) + 人员(磷虾船)" /api/records \
+  '{"keys":["溯源","仓储","人员"],"filter":{"溯源":{"商品编号":"XY-001"},"仓储":{"仓库类别":"工厂冷库"},"人员":{"所属":"磷虾船"}}}'
 
-q "B 溯源·虾油 XY-001（链条含 虾油提取 环节、引用检测）" \
-  -X POST "$H/api/query" -H 'Content-Type: application/json' -d '{"key":"溯源","filter":{"商品编号":"XY-001"}}'
+post "B·records ★金蝶真实标定：虾油检测（磷脂≈60.7/EPA16.2/DHA7.58/虾青素181mg·kg/酸价7.8）" /api/records \
+  '{"keys":["检测"],"filter":{"检测":{"产品":"虾油","批次":"XYTQ-2026-001"}}}'
 
-q "B 检测·虾油（★金蝶真实标定：磷脂≈60.7 EPA≈16.2 DHA≈7.58 虾青素181mg/kg 酸价7.8）" \
-  -X POST "$H/api/query" -H 'Content-Type: application/json' -d '{"key":"检测","filter":{"产品":"虾油","批次":"XYTQ-2026-001"}}'
+# —— C 表：/api/series（批量时序；点查 / 区间）——
+post "C·series 点查：冻虾舱温度 + 海况(多指标)" /api/series \
+  '{"keys":["船舶.冻虾舱.温度","船舶.海况"],"time":"2026-06-18 12:00:00"}'
 
-q "B 仓储·工厂冷库（多条）" \
-  -X POST "$H/api/query" -H 'Content-Type: application/json' -d '{"key":"仓储","filter":{"仓库类别":"工厂冷库"}}'
+post "C·series 区间：冻虾舱温度 00:00~06:00（应 7 点、平滑）" /api/series \
+  '{"keys":["船舶.冻虾舱.温度"],"start":"2026-06-18 00:00:00","end":"2026-06-18 06:00:00"}'
 
-q "B 人员·磷虾船（4 人，含内嵌时序属性）" \
-  -X POST "$H/api/query" -H 'Content-Type: application/json' -d '{"key":"人员","filter":{"所属":"磷虾船"}}'
+post "C·series 确定性：同查询再来一次（值与上面点查相同）" /api/series \
+  '{"keys":["船舶.冻虾舱.温度"],"time":"2026-06-18 12:00:00"}'
 
-q "C 点查·冻虾舱温度（应在 [-25,-15]，约 -18）" \
-  -X POST "$H/api/query" -H 'Content-Type: application/json' -d '{"key":"船舶.冻虾舱.温度","time":"2026-06-18 12:00:00"}'
+post "C·series ★派生：虾油得率（=成品油/虾粉，应≈18% 金蝶真实出油率）" /api/series \
+  '{"keys":["工厂.虾油线.生产数据"],"time":"2026-06-18 12:00:00","指标":"虾油得率"}'
 
-q "C 区间·冻虾舱温度（00:00~06:00 应 7 点序列、平滑）" \
-  -X POST "$H/api/query" -H 'Content-Type: application/json' -d '{"key":"船舶.冻虾舱.温度","start":"2026-06-18 00:00:00","end":"2026-06-18 06:00:00"}'
+post "C·series 派生：剩余燃油百分比（=剩余燃油/1000*100）" /api/series \
+  '{"keys":["船舶.能耗.剩余燃油百分比"],"time":"2026-06-18 12:00:00"}'
 
-q "C 确定性·同查询再来一次（值应与上面点查完全相同）" \
-  -X POST "$H/api/query" -H 'Content-Type: application/json' -d '{"key":"船舶.冻虾舱.温度","time":"2026-06-18 12:00:00"}'
+post "C·series 引用：车间外大气.温度（=工厂.天气.温度，引用不复制）" /api/series \
+  '{"keys":["工厂.虾油线.生产数据"],"time":"2026-06-18 12:00:00","指标":"车间外大气.温度"}'
 
-q "C 多指标·虾油线成品油产量（累计，速率按金蝶真实出油率18%标定）" \
-  -X POST "$H/api/query" -H 'Content-Type: application/json' -d '{"key":"工厂.虾油线.生产数据","filter":{"指标":"成品油产量"},"start":"2026-06-18 00:00:00","end":"2026-06-18 12:00:00"}'
-# 注：虾油得率/剩余燃油百分比 是"派生"指标(=产出/投入，constraints 求)，当前返回占位 note，
-#     派生求值的接入是下一步铺开项；成分质检值的真实标定见上面"B 检测"那条。
+post "C·series 离散：拖网绞车状态（运行/待机/停止）" /api/series \
+  '{"keys":["船舶.桁杆泵吸系统.拖网绞车.状态"],"time":"2026-06-18 12:00:00"}'
 
-q "C 离散·拖网绞车状态（运行/待机/停止）" \
-  -X POST "$H/api/query" -H 'Content-Type: application/json' -d '{"key":"船舶.桁杆泵吸系统.拖网绞车.状态","time":"2026-06-18 12:00:00"}'
+post "航迹：船舶航行（经纬度/航速/航向 派生一致）" /api/series \
+  '{"keys":["船舶.航行"],"time":"2026-06-18 12:00:00"}'
 
-q "航迹·船舶航行（经纬度/航速/航向 派生一致）" \
-  -X POST "$H/api/query" -H 'Content-Type: application/json' -d '{"key":"船舶.航行","time":"2026-06-18 12:00:00"}'
+# —— 误用保护：用错接口会被明确指出 ——
+post "误用：把 A 表 key 打到 /series（应返回 error 提示用 /value）" /api/series \
+  '{"keys":["船舶.信息"]}'
 
-q "404·不存在的 key" \
-  -X POST "$H/api/query" -H 'Content-Type: application/json' -d '{"key":"不存在.key"}'
-
-echo -e "\n— 全部用例已发出，逐条核对上面输出 —"
+echo -e "\n— 全部用例已发出，逐条核对 —"

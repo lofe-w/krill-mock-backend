@@ -22,6 +22,7 @@ class Registry:
         self.constraints = {}
         self.overrides = []
         self.sources = {}
+        self.derivations = {}   # 派生指标全限定key -> 表达式（来自 constraints）
 
     def metric_paths(self):
         """全部可被引用的 key 路径：注册 key + <key>.<指标名>。"""
@@ -67,7 +68,27 @@ def load() -> Registry:
     if os.path.exists(spath):
         docs = _load_yaml(spath)
         reg.sources = docs[0] if docs and isinstance(docs[0], dict) else {}
+    reg.derivations = _build_derivations(reg.constraints)
     return reg
+
+
+def _build_derivations(constraints):
+    """从 constraints 收集所有 {key, 定义} 对 → {全限定key: 表达式}。
+    覆盖：物料守恒.*.得率派生、得率.*、百分比派生[]。"""
+    out = {}
+
+    def walk(n):
+        if isinstance(n, dict):
+            if isinstance(n.get("key"), str) and isinstance(n.get("定义"), str):
+                out[n["key"]] = n["定义"]
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(constraints)
+    return out
 
 
 # —— 静态自检：只验证"跨 key 引用"——即以 船舶./工厂. 开头的全限定数据 key ——
