@@ -109,5 +109,10 @@ krill-mock-backend/
 │   ├── registry.py(加载+自检) seed/generators/timegrid/resolver/api/main
 │   └── README.md
 ├── tests/smoke.py                         # 端到端纵切冒烟（9/9 通过）
-└── requirements.txt
+├── examples/queries.sh                    # 验收用例（13 条 curl）
+├── Dockerfile  compose.yaml               # ★docker compose 编排
+├── requirements.txt
+└── docs/03-运行与验收.md                   # ★怎么启动/怎么验收/接口在哪
 ```
+
+**验收入口**：`docker compose up -d --build` → `http://localhost:8000/docs`（Swagger）或 `bash examples/queries.sh`；详见 `docs/03-运行与验收.md`。

@@ -27,4 +27,21 @@ def api_query(q: Query):
 def health():
     rep = selfcheck(REG)
     return {"status": 200, "keys": rep["key_count"], "by_table": rep["by_table"],
+            "by_maturity": rep["by_maturity"], "selfcheck_ok": rep["ok"], "unresolved": rep["unresolved"]}
+
+
+@app.get("/api/keys")
+def list_keys():
+    """列出全部已注册 key（便于验收时挑着查）。"""
+    return {"status": 200, "data": [{"key": k, "表": s.get("表"), "成熟度": s.get("成熟度")}
+                                    for k, s in REG.keys.items()]}
+
+
+@app.post("/api/reload")
+def reload_registry():
+    """改完 config/*.yaml 后调用，无需重启即重新加载 + 自检。"""
+    global REG
+    REG = load()
+    rep = selfcheck(REG)
+    return {"status": 200, "reloaded": True, "keys": rep["key_count"],
             "selfcheck_ok": rep["ok"], "unresolved": rep["unresolved"]}
