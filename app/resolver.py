@@ -200,13 +200,19 @@ def resolve(reg, key, filter=None, time=None, start=None, end=None):
             return {"status": 200, "key": key, "表": "C", "单位": spec.get("单位"),
                     "派生": expr, "values": _emit(reg, key, vf, dt_point, rng, gmin)}
 
-        # 多指标：filter.指标 选取，否则全部
+        # 多指标：filter.指标 选取（str / list 均可），否则全部
         指标 = spec.get("指标")
         if isinstance(指标, dict):
             want = (filter or {}).get("指标")
+            if isinstance(want, str):
+                wset = {want}
+            elif isinstance(want, (list, tuple, set)):
+                wset = set(want)
+            else:
+                wset = None
             data = {}
             for name, m in 指标.items():
-                if want and name != want:
+                if wset and name not in wset:
                     continue
                 fk = f"{key}.{name}"
                 r = m.get("规则")

@@ -38,7 +38,11 @@ class SeriesQ(BaseModel):
     time: Optional[str] = None
     start: Optional[str] = None
     end: Optional[str] = None
-    指标: Optional[str] = None                  # 可选：限定多指标 C key 的某个指标
+    # 可选·限定多指标 C key 要哪些指标。三种写法：
+    #   "成品油产量"                                  → 单指标，应用到所有 key
+    #   ["海水温度","有义波高"]                         → 多指标，应用到所有 key
+    #   {"工厂.虾油线.生产数据":["成品油产量","虾油得率"]} → 按 key 各自给一组（推荐）
+    指标: Optional[Any] = None
 
 
 def _wrap(key, r, want_table):
@@ -68,11 +72,21 @@ def api_records(q: RecordsQ):
     return {"status": 200, "data": data}
 
 
+def _指标_for(指标, key):
+    """series 的指标选择：按 key 的 map 优先；否则 str/list 应用到全部。"""
+    if 指标 is None:
+        return None
+    if isinstance(指标, dict):
+        return 指标.get(key)                    # 该 key 没给 → None（全要）
+    return 指标                                 # str 或 list，应用到全部
+
+
 @app.post("/api/series")
 def api_series(q: SeriesQ):
     data = {}
     for k in q.keys:
-        flt = {"指标": q.指标} if q.指标 else None
+        sel = _指标_for(q.指标, k)
+        flt = {"指标": sel} if sel else None
         r = _wrap(k, resolve(REG, k, filter=flt, time=q.time, start=q.start, end=q.end), "C")
         if "error" in r:
             data[k] = r
