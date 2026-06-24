@@ -42,9 +42,10 @@ def main():
     chain = b["data"][0]["value"]["溯源链条"]
     assert isinstance(chain, list), "溯源链条应为有序数组"
     assert chain[0]["环节"] == "磷虾捕捞" and chain[-1]["环节"] == "产品检测"   # 顺序：捕捞→…→检测
-    assert "直接蒸煮器加热温度" in chain[1]                                    # 环节带具体值，非内部key引用
-    assert not any("引用" in seg for seg in chain), "不应再有内部 key 引用"
-    passed.append("B 溯源(有序数组+具体值,无内部引用)")
+    assert set(chain[1].keys()) == {"环节", "数据"}                            # 元素=标签+数据两层，环节是字段非键
+    assert "直接蒸煮器加热温度" in chain[1]["数据"]                            # 具体值在 数据 内
+    assert not any("引用" in str(seg) for seg in chain), "不应再有内部 key 引用"
+    passed.append("B 溯源(有序数组·{环节,数据}·具体值·无引用)")
 
     # C 有界瞬时（点查 + 区间 + 确定性 + 区间断言）
     c1 = resolve(reg, "船舶.能耗.剩余燃油", time=T)
@@ -92,11 +93,10 @@ def main():
     assert 13 <= yv <= 27, f"得率 {yv} 不在真实区间"
     passed.append(f"派生·虾油得率={yv}%(真实出油率)")
 
-    # 引用：车间外大气.温度 == 工厂.天气.温度（不复制）
-    ref = resolve(reg, "工厂.虾油线.生产数据", filter={"指标": "车间外大气.温度"}, time=T)
-    src = resolve(reg, "工厂.天气", filter={"指标": "温度"}, time=T)
-    assert ref["data"]["车间外大气.温度"]["values"][0]["value"] == src["data"]["温度"]["values"][0]["value"]
-    passed.append("引用·车间外大气→天气(同值不复制)")
+    # 同一事实只建一处：车间外大气温度不再单独建模，前端直接查 工厂.天气.温度
+    w = resolve(reg, "工厂.天气", filter={"指标": "温度"}, time=T)
+    assert -10 <= w["data"]["温度"]["values"][0]["value"] <= 45
+    passed.append("同一事实只建一处(车间外大气=工厂.天气)")
 
     print("\n" + "=" * 50)
     for p in passed:

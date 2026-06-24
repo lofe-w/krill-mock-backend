@@ -1,5 +1,5 @@
 """取数解析器（配置与取数契约 §5）。
-核心 resolve() 按表分派；派生(得率/百分比)与引用接入 constraints 求值。
+核心 resolve() 按表分派；派生(得率/百分比)经 constraints 表达式求值。
 对外接口（api.py）拆为每表一个：/api/value(A) /api/records(B) /api/series(C)。"""
 import ast
 import operator
@@ -224,20 +224,6 @@ def resolve(reg, key, filter=None, time=None, start=None, end=None):
                     rngc = m.get("区间")
                     vf = lambda dt, e=expr, rc=rngc: eval_derived(reg, key, e, dt, rc)
                     data[name] = {"单位": m.get("单位"), "派生": expr,
-                                  "values": _emit(reg, key, vf, dt_point, rng, gmin)}
-                elif m.get("引用"):
-                    ref = m["引用"]
-                    rk, rsub = (ref.rsplit(".", 0)[0], None)
-                    # 引用形如 工厂.天气.温度 → 拆出 registry key + 指标
-                    rk = None
-                    for k2 in reg.keys:
-                        if ref == k2 or ref.startswith(k2 + "."):
-                            if rk is None or len(k2) > len(rk):
-                                rk = k2
-                    rsub = ref[len(rk) + 1:] if rk and ref != rk else None
-                    vf = lambda dt, rk=rk, rsub=rsub: _c_point(reg, rk, dt, 指标=rsub) if rk else None
-                    # 引用解析为实际值返回（同一实时事实，不复制）；不向外暴露内部 key
-                    data[name] = {"单位": m.get("单位"),
                                   "values": _emit(reg, key, vf, dt_point, rng, gmin)}
                 else:
                     data[name] = {"note": "占位/说明项，未配置规则"}
