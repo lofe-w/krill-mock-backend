@@ -41,18 +41,18 @@ def main():
     assert b["data"][0]["value"]["类别"] == "全脂虾粉溯源"
     chain = b["data"][0]["value"]["溯源链条"]
     assert isinstance(chain, list), "溯源链条应为有序数组"
-    assert chain[0]["环节"] == "磷虾捕捞" and chain[-1]["环节"] == "产品检测"   # 顺序：捕捞→…→检测
+    assert chain[0]["环节"] == "磷虾捕捞" and chain[-1]["环节"] == "全脂虾粉产品检测"   # 顺序：捕捞→…→检测（环节名照甲方6.1）
     assert set(chain[1].keys()) == {"环节", "数据"}                            # 元素=标签+数据两层，环节是字段非键
     assert "直接蒸煮器加热温度" in chain[1]["数据"]                            # 具体值在 数据 内
     assert not any("引用" in str(seg) for seg in chain), "不应再有内部 key 引用"
     passed.append("B 溯源(有序数组·{环节,数据}·具体值·无引用)")
 
     # C 有界瞬时（点查 + 区间 + 确定性 + 区间断言）
-    c1 = resolve(reg, "船舶.能耗.剩余燃油", time=T)
+    c1 = resolve(reg, "船舶.能耗.剩余燃油", start=T, end=T)
     show("C 有界瞬时 船舶.能耗.剩余燃油 @点查", c1)
     v = c1["values"][0]["value"]
     assert 0 <= v <= 1000, f"超区间: {v}"
-    c1b = resolve(reg, "船舶.能耗.剩余燃油", time=T)
+    c1b = resolve(reg, "船舶.能耗.剩余燃油", start=T, end=T)
     assert c1b["values"][0]["value"] == v, "不确定性！同输入应同输出"
     passed.append("C 有界瞬时(点查/确定性/区间)")
 
@@ -61,20 +61,20 @@ def main():
     passed.append(f"C 区间枚举({len(c1r['values'])}点)")
 
     # C 累计（单调 + 确定性）
-    c2a = resolve(reg, "船舶.捕捞.累计产量.泵吸", time="2026-06-18 12:00:00")
-    c2b = resolve(reg, "船舶.捕捞.累计产量.泵吸", time="2026-06-18 18:00:00")
+    c2a = resolve(reg, "船舶.捕捞.累计产量.泵吸", start="2026-06-18 12:00:00", end="2026-06-18 12:00:00")
+    c2b = resolve(reg, "船舶.捕捞.累计产量.泵吸", start="2026-06-18 18:00:00", end="2026-06-18 18:00:00")
     show("C 累计 12:00", c2a); show("C 累计 18:00", c2b)
     assert c2b["values"][0]["value"] >= c2a["values"][0]["value"], "累计非单调！"
     passed.append("C 累计(单调)")
 
     # C 离散状态
-    c3 = resolve(reg, "船舶.桁杆泵吸系统.拖网绞车.状态", time=T)
+    c3 = resolve(reg, "船舶.桁杆泵吸系统.拖网绞车.状态", start=T, end=T)
     show("C 离散状态 拖网绞车", c3)
     assert c3["values"][0]["value"] in ["运行", "待机", "停止"]
     passed.append("C 离散状态")
 
     # 航迹（4 输出派生一致）
-    nav = resolve(reg, "船舶.航行", time=T)
+    nav = resolve(reg, "船舶.航行", start=T, end=T)
     show("C 航迹 船舶.航行", nav)
     pv = nav["values"][0]["value"]
     assert set(["经度", "纬度", "航速", "航向"]).issubset(pv.keys())
@@ -87,14 +87,14 @@ def main():
     passed.append("B 设备台账多记录")
 
     # 派生：虾油得率应≈18%（金蝶真实出油率，=成品油/虾粉）
-    d = resolve(reg, "工厂.虾油线.生产数据", filter={"指标": "虾油得率"}, time=T)
+    d = resolve(reg, "工厂.虾油线.生产数据", filter={"指标": "虾油得率"}, start=T, end=T)
     yv = d["data"]["虾油得率"]["values"][0]["value"]
     show("派生 虾油得率", d["data"]["虾油得率"])
     assert 13 <= yv <= 27, f"得率 {yv} 不在真实区间"
     passed.append(f"派生·虾油得率={yv}%(真实出油率)")
 
     # 同一事实只建一处：车间外大气温度不再单独建模，前端直接查 工厂.天气.温度
-    w = resolve(reg, "工厂.天气", filter={"指标": "温度"}, time=T)
+    w = resolve(reg, "工厂.天气", filter={"指标": "温度"}, start=T, end=T)
     assert -10 <= w["data"]["温度"]["values"][0]["value"] <= 45
     passed.append("同一事实只建一处(车间外大气=工厂.天气)")
 

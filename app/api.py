@@ -15,6 +15,7 @@ except Exception:
     pass
 from .registry import load, selfcheck
 from .resolver import resolve
+from .timegrid import parse_time
 
 # —— 鉴权配置（来自环境变量）——
 AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
@@ -66,10 +67,9 @@ class RecordsQ(BaseModel):
 
 class SeriesQ(BaseModel):
     keys: List[str]
-    time: Optional[str] = None
+    metrics: Optional[Dict[str, List[str]]] = None   # 按 key 作用域：{key: [指标名,...]}
     start: Optional[str] = None
     end: Optional[str] = None
-    指标: Optional[Any] = None              # str | [str] | {key:[str]}
 
 
 def _filter_for(filter: Optional[Dict], key: str):
@@ -92,12 +92,40 @@ def _validate_records_filter(filter: Optional[Dict]):
                     f"以下顶层项不是已注册 key 或值非对象：{bad}。"))
 
 
-def _指标_for(指标, key):
-    if 指标 is None:
-        return None
-    if isinstance(指标, dict):
-        return 指标.get(key)
-    return 指标
+def _metrics_for(metrics: Optional[Dict], key: str):
+    """C 表指标选取：metrics 按 key 作用域，形如 {key: [指标名,...]}（与 records.filter 对称）。
+    形状由 _validate_series_metrics 保证，这里直接取本 key 选中的指标列表。"""
+    return (metrics or {}).get(key)
+
+
+def _validate_series_metrics(metrics: Optional[Dict]):
+    """/api/series 是批量接口（keys:[...]）+ 单个共享 metrics，故 metrics 必须按 key 作用域：
+    {key: [指标名,...]}。每个顶层项都得是已注册 key、值是指标名列表；否则 400，
+    避免无作用域的指标选择被静默套到所有 key。"""
+    if not metrics:
+        return
+    bad = [k for k in metrics if k not in REG.keys or not isinstance(metrics[k], list)]
+    if bad:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"metrics 须按 key 作用域，形如 {{\"<key>\": [指标名,...]}}；"
+                    f"以下顶层项不是已注册 key 或值非列表：{bad}。"))
+
+
+def _validate_series_range(start: Optional[str], end: Optional[str]):
+    """时间模式由 start/end 表达：都不传=当前时刻单点；start==end=该时刻单点；end>start=区间。
+    start/end 必须成对出现，且 end 不得早于 start——落单或倒挂直接 400，不静默退化成点查。"""
+    if (start is None) != (end is None):
+        raise HTTPException(
+            status_code=400,
+            detail="start/end 必须成对出现：都不传=当前时刻；二者相等=该时刻单点；end>start=区间。")
+    if start is not None and end is not None:
+        try:
+            s, e = parse_time(start), parse_time(end)
+        except ValueError as ex:
+            raise HTTPException(status_code=400, detail=str(ex))
+        if e < s:
+            raise HTTPException(status_code=400, detail=f"end 不得早于 start：start={start}, end={end}。")
 
 
 # 表 → 对外接口（与 _wrap 的 A→/value、B→/records、C→/series 一致）
@@ -134,11 +162,13 @@ def api_records(q: RecordsQ):
 
 @app.post("/api/series", dependencies=[Depends(require_app)])
 def api_series(q: SeriesQ):
+    _validate_series_metrics(q.metrics)
+    _validate_series_range(q.start, q.end)
     data = {}
     for k in q.keys:
-        sel = _指标_for(q.指标, k)
+        sel = _metrics_for(q.metrics, k)
         flt = {"指标": sel} if sel else None
-        r = _wrap(k, resolve(REG, k, filter=flt, time=q.time, start=q.start, end=q.end), "C")
+        r = _wrap(k, resolve(REG, k, filter=flt, start=q.start, end=q.end), "C")
         if "error" in r:
             data[k] = r
         elif "values" in r:
