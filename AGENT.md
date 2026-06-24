@@ -79,10 +79,11 @@
 **状态**：需求齐备；模型已收敛为"两轴四角 / 三表 A/B/C 实例化 + 谱系投影"(domain.md v2.1，据前端消费方式查证，D 降为潜在扩展)；已**下沉为数据字典 + 配置与取数契约**(全量 key 实例化、注册表 schema、约束/派生层)；过程/草稿文档已清理。代码尚未开始。
 
 **下一步**：
-1. ✅ 已落地 `config/`（注册表 + constraints + overrides + sources，全量 key 覆盖、YAML 校验通过）。
-2. 实现最小 resolver：注册表加载 → 表分派 → 成熟度取值 → constraints 套用；先打通"规则生成(C)+人工固定(A/B)"两条主链端到端。
-3. 真值采集 provider（天气/航行海况/视频）待《待确认清单》Q3/Q5；并行提 Q1–Q6。
-4. 各 key 同构占位项（三线、工段子指标）随开发按模板补全；规则参数据演示效果标定。
+1. ✅ 已落地 `config/`（全量 key、金蝶真实数据标定、YAML 校验通过）。
+2. ✅ 已实现最小 resolver 并**端到端纵切跑通**（`app/` + `tests/smoke.py` 9/9；55 key 自检引用完整）。
+3. 铺开：`指标` 多指标批量、`派生`(得率/百分比)与`引用`接入 constraints 求值、`航迹`完善。
+4. 真值采集 provider（天气/航行海况/视频）待《待确认清单》Q3/Q5；并行提 Q1–Q6。
+5. HTTP 层联调（沙箱无 fastapi，api.py 为薄包装，随真实环境验证）；接口表层据前端再定稿。
 
 ---
 
@@ -104,5 +105,9 @@ krill-mock-backend/
 │   ├── constraints.yaml                   # 跨 key 约束/派生（INV-1..6）
 │   ├── overrides.yaml                     # 覆盖/冻结/兜底
 │   └── sources.yaml                       # 真值源连接（密钥走环境变量）
-└── (resolver 代码尚未开始)
+├── app/                                   # ★最小 resolver（端到端纵切，已跑通）
+│   ├── registry.py(加载+自检) seed/generators/timegrid/resolver/api/main
+│   └── README.md
+├── tests/smoke.py                         # 端到端纵切冒烟（9/9 通过）
+└── requirements.txt
 ```
