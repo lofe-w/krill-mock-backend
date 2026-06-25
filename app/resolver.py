@@ -5,7 +5,8 @@ import ast
 import operator
 import re
 from datetime import datetime
-from .timegrid import parse_time, grid_minutes, align, enumerate_grid, to_min, EPOCH
+from .timegrid import (parse_time, grid_minutes, align, bucket_samples,
+                       to_min, EPOCH, DEFAULT_POINTS, MAX_POINTS)
 from .generators import GENERATORS
 
 # —— 安全算术求值（仅 + - * / ** 和括号，无名字/调用）——
@@ -96,8 +97,8 @@ def _c_point(reg, key, dt, 指标=None):
     return _gen_point(rule, name, dt, gmin, reg)
 
 
-def _resolve_ident(reg, parent_key, idn, dt):
-    """派生表达式里的标识符 → 数值：先按全限定 key，再按父 key 的兄弟指标。"""
+def _resolve_ident(reg, derived_key, idn, dt):
+    """派生表达式里的标识符 → 数值：①全限定 key；②同组兄弟项（扁平化后 = 组前缀 + 标识符）。"""
     best = None
     for k in reg.keys:
         if idn == k or idn.startswith(k + "."):
@@ -106,7 +107,10 @@ def _resolve_ident(reg, parent_key, idn, dt):
     if best:
         sub = idn[len(best) + 1:] if idn != best else None
         return _c_point(reg, best, dt, 指标=sub)
-    return _c_point(reg, parent_key, dt, 指标=idn)   # 兄弟指标
+    组 = (reg.keys.get(derived_key) or {}).get("_组")   # 兄弟项：同组前缀拼接
+    if 组 and f"{组}.{idn}" in reg.keys:
+        return _c_point(reg, f"{组}.{idn}", dt)
+    return None
 
 
 def eval_derived(reg, parent_key, expr, dt, rng=None):
@@ -155,17 +159,30 @@ def _match(entry_filter, query):
 
 
 # —— 时序发射器：给一个 value_fn(dt)->值，按点查/区间产出 ——
-def _emit(reg, key, value_fn, dt_point, rng, gmin):
+# 区间走固定点数分桶（§5.1）：N 桶、step 自适应、每桶按 量语义 取采样时刻。
+def _emit(reg, key, value_fn, dt_point, rng, gmin, n=None, 量语义=None):
     def one(dt):
         ov = _check_override(reg, key, dt)
         val = ov if ov is not None else value_fn(dt)
         return {"time": align(dt, gmin).strftime("%Y-%m-%d %H:%M:%S"), "value": val}
     if dt_point is not None or (rng[0] is None and rng[1] is None):
         return [one(dt_point or datetime.now())]
-    return [one(dt) for dt in enumerate_grid(rng[0], rng[1], gmin)]
+    return [one(dt) for dt in bucket_samples(rng[0], rng[1], gmin, n, 量语义 or "瞬时")]
 
 
-def resolve(reg, key, filter=None, start=None, end=None):
+def _resolve_points(spec, points):
+    """N = 请求 points ?? 配置 默认点数 ?? 全局默认；clamp 到 [1, MAX_POINTS]。"""
+    n = points if points is not None else spec.get("默认点数")
+    if n is None:
+        n = DEFAULT_POINTS
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = DEFAULT_POINTS
+    return max(1, min(n, MAX_POINTS))
+
+
+def resolve(reg, key, filter=None, start=None, end=None, points=None):
     spec = reg.keys.get(key)
     if spec is None:
         return {"status": 404, "key": key, "msg": f"key 未注册: {key}"}
@@ -180,7 +197,15 @@ def resolve(reg, key, filter=None, start=None, end=None):
         return {"status": 200, "key": key, "表": "B", "data": out}
 
     if table == "C":
+        # 分组容器（原指标 dict 父节点）：不是时序，给出子 key 供前端发现
+        if spec.get("分组"):
+            return {"status": 200, "key": key, "表": "C", "分组": True,
+                    "子": spec.get("子", []),
+                    "note": "分组 key（容器），请查询其下具体子 key"}
+
         gmin = grid_minutes(spec.get("网格"))
+        量语义 = spec.get("量语义")
+        n = _resolve_points(spec, points)
         # 时间模式由 start/end 表达（无独立 time 参数）：
         #   都不传 → 当前时刻单点；start==end → 该时刻单点；end>start → 区间。
         s, e = parse_time(start), parse_time(end)
@@ -192,50 +217,24 @@ def resolve(reg, key, filter=None, start=None, end=None):
             dt_point, rng = None, (s, e)                # 区间
         maturity = spec.get("成熟度")
 
-        # 单规则 / 单派生（标量型 C，如 剩余燃油百分比）
+        # 单规则（标量型 C / 航迹复合 value）
         rule = _rule_of(spec)
         if rule:
             vf = lambda dt: _gen_point(rule, key, dt, gmin, reg)
             resp = {"status": 200, "key": key, "表": "C", "单位": spec.get("单位"),
-                    "values": _emit(reg, key, vf, dt_point, rng, gmin)}
+                    "values": _emit(reg, key, vf, dt_point, rng, gmin, n, 量语义)}
             if maturity == "真值采集":
                 resp["note"] = "真值采集·当前用 fallback 规则（待真实源就绪切换）"
             return resp
-        if spec.get("派生"):
+        # 派生（得率/百分比；表达式标识符按全限定 key 或同组兄弟项解析）
+        if spec.get("派生") or key in reg.derivations:
             expr = reg.derivations.get(key) or spec.get("派生")
-            vf = lambda dt: eval_derived(reg, key, expr, dt)
+            rngc = spec.get("区间")
+            vf = lambda dt: eval_derived(reg, key, expr, dt, rngc)
             return {"status": 200, "key": key, "表": "C", "单位": spec.get("单位"),
-                    "派生": expr, "values": _emit(reg, key, vf, dt_point, rng, gmin)}
+                    "派生": expr, "values": _emit(reg, key, vf, dt_point, rng, gmin, n, 量语义)}
 
-        # 多指标：filter.指标 选取（str / list 均可），否则全部
-        指标 = spec.get("指标")
-        if isinstance(指标, dict):
-            want = (filter or {}).get("指标")
-            if isinstance(want, str):
-                wset = {want}
-            elif isinstance(want, (list, tuple, set)):
-                wset = set(want)
-            else:
-                wset = None
-            data = {}
-            for name, m in 指标.items():
-                if wset and name not in wset:
-                    continue
-                fk = f"{key}.{name}"
-                r = m.get("规则")
-                if r:
-                    vf = lambda dt, r=r, fk=fk: _gen_point(r, fk, dt, gmin, reg)
-                    data[name] = {"单位": m.get("单位"), "values": _emit(reg, key, vf, dt_point, rng, gmin)}
-                elif m.get("派生") or fk in reg.derivations:
-                    expr = reg.derivations.get(fk) or m.get("派生")
-                    rngc = m.get("区间")
-                    vf = lambda dt, e=expr, rc=rngc: eval_derived(reg, key, e, dt, rc)
-                    data[name] = {"单位": m.get("单位"), "派生": expr,
-                                  "values": _emit(reg, key, vf, dt_point, rng, gmin)}
-                else:
-                    data[name] = {"note": "占位/说明项，未配置规则"}
-            return {"status": 200, "key": key, "表": "C", "data": data}
-
-        return {"status": 200, "key": key, "表": "C", "note": "C 但无规则/指标（真值采集待对接）"}
+        return {"status": 200, "key": key, "表": "C",
+                "note": "占位/说明项，未配置规则（或真值采集待对接）"}
 
     return {"status": 500, "key": key, "msg": f"未知表: {table}"}

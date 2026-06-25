@@ -86,17 +86,39 @@ def main():
     assert ov["status"] == 200
     passed.append("B 设备台账多记录")
 
-    # 派生：虾油得率应≈18%（金蝶真实出油率，=成品油/虾粉）
-    d = resolve(reg, "工厂.虾油线.生产数据", filter={"指标": "虾油得率"}, start=T, end=T)
-    yv = d["data"]["虾油得率"]["values"][0]["value"]
-    show("派生 虾油得率", d["data"]["虾油得率"])
+    # 派生：虾油得率应≈18%（金蝶真实出油率，=成品油/虾粉）——扁平化后直接查叶子 key
+    d = resolve(reg, "工厂.虾油线.生产数据.虾油得率", start=T, end=T)
+    yv = d["values"][0]["value"]
+    show("派生 虾油得率", d)
     assert 13 <= yv <= 27, f"得率 {yv} 不在真实区间"
     passed.append(f"派生·虾油得率={yv}%(真实出油率)")
 
-    # 同一事实只建一处：车间外大气温度不再单独建模，前端直接查 工厂.天气.温度
-    w = resolve(reg, "工厂.天气", filter={"指标": "温度"}, start=T, end=T)
-    assert -10 <= w["data"]["温度"]["values"][0]["value"] <= 45
+    # 同一事实只建一处：车间外大气温度不再单独建模，前端直接查 工厂.天气.温度（扁平 key）
+    w = resolve(reg, "工厂.天气.温度", start=T, end=T)
+    assert -10 <= w["values"][0]["value"] <= 45
     passed.append("同一事实只建一处(车间外大气=工厂.天气)")
+
+    # 扁平化：指标 dict 父节点降为「分组」容器，给出子 key 供发现（不再传 metrics）
+    g = resolve(reg, "船舶.海况", start=T, end=T)
+    assert g.get("分组") and "船舶.海况.海水温度" in g.get("子", [])
+    passed.append(f"分组容器(海况→{len(g['子'])}子key)")
+
+    # 固定点数：区间分桶。查一年用 points=12 → 恰 12 点（自适应比例尺）
+    sr = resolve(reg, "船舶.海况.海水温度",
+                 start="2026-01-01 00:00:00", end="2026-12-31 00:00:00", points=12)
+    assert len(sr["values"]) == 12, f"分桶点数={len(sr['values'])}"
+    # 默认点数=20：同跨度不传 points → ≤20 点
+    sr20 = resolve(reg, "船舶.海况.海水温度",
+                   start="2026-01-01 00:00:00", end="2026-12-31 00:00:00")
+    assert len(sr20["values"]) <= 20, f"默认点数={len(sr20['values'])}"
+    passed.append(f"固定点数分桶(年查 points=12→{len(sr['values'])}点, 默认→{len(sr20['values'])}点)")
+
+    # 累计型分桶取桶右端：单调不减
+    cum = resolve(reg, "船舶.捕捞.累计产量.泵吸",
+                  start="2026-06-18 00:00:00", end="2026-06-18 23:59:00", points=8)
+    vs = [p["value"] for p in cum["values"]]
+    assert vs == sorted(vs), "累计分桶应单调不减"
+    passed.append(f"累计分桶单调({len(vs)}点)")
 
     print("\n" + "=" * 50)
     for p in passed:

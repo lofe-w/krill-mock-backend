@@ -6,7 +6,7 @@ CORS：浏览器跨域调用需开启（见 CORS_ORIGINS）。"""
 import os
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional, Dict, Any, List
 try:
     from dotenv import load_dotenv
@@ -56,20 +56,44 @@ def require_ops(authorization: Optional[str] = Header(None)):
 
 
 # —— 请求体 ——
+# 各请求体挂 json_schema_extra.example：用真实 key 名替换 Swagger 对「动态 key 的 map」
+# 默认渲染的 additionalProp1/2，使 /docs 的示例即一条可直接联调的真请求。
 class ValueQ(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "example": {"keys": ["船舶.信息", "工厂.虾油线.设计能力"]}})
     keys: List[str]
 
 
 class RecordsQ(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "example": {"keys": ["溯源"],
+                    "filter": {"溯源": {"产品批号": "2606AKO01"}}}})
     keys: List[str]
     filter: Optional[Dict[str, Any]] = None
 
 
-class SeriesQ(BaseModel):
-    keys: List[str]
-    metrics: Optional[Dict[str, List[str]]] = None   # 按 key 作用域：{key: [指标名,...]}
-    start: Optional[str] = None
+class WindowEntry(BaseModel):
+    """C·series 逐 key 的时间窗 + 采样点数。三者皆可选、逐条目自洽（见 _validate_series_window）。
+    用具名模型而非裸 dict，使 OpenAPI/Swagger 正确展示 start/end/points 字段。"""
+    model_config = ConfigDict(extra="forbid")   # 多余字段 → 422（避免静默放行）
+    start: Optional[str] = None                  # "YYYY-MM-DD HH:mm:ss"；与 end 成对
     end: Optional[str] = None
+    points: Optional[int] = None                 # 区间重采样点数；缺省→配置 默认点数→全局 20
+
+
+class SeriesQ(BaseModel):
+    # 三端点同构：keys + 一个按 key 作用域的 map。C 的轴是「时间」，故名 window（非 filter）。
+    # window: { "<key>": { "start"?, "end"?, "points"? } } —— 逐 key 自洽；缺省即回退。
+    model_config = ConfigDict(json_schema_extra={"example": {
+        "keys": ["船舶.海况.海水温度", "船舶.能耗.累计耗油量", "船舶.航行"],
+        "window": {
+            "船舶.海况.海水温度": {"start": "2026-01-01 00:00:00",
+                                "end": "2026-12-31 00:00:00", "points": 12},
+            "船舶.能耗.累计耗油量": {"start": "2026-01-01 00:00:00",
+                                "end": "2026-06-25 00:00:00"},
+        }}})
+    keys: List[str]
+    window: Optional[Dict[str, WindowEntry]] = None
 
 
 def _filter_for(filter: Optional[Dict], key: str):
@@ -92,40 +116,50 @@ def _validate_records_filter(filter: Optional[Dict]):
                     f"以下顶层项不是已注册 key 或值非对象：{bad}。"))
 
 
-def _metrics_for(metrics: Optional[Dict], key: str):
-    """C 表指标选取：metrics 按 key 作用域，形如 {key: [指标名,...]}（与 records.filter 对称）。
-    形状由 _validate_series_metrics 保证，这里直接取本 key 选中的指标列表。"""
-    return (metrics or {}).get(key)
+_WINDOW_FIELDS = {"start", "end", "points"}
 
 
-def _validate_series_metrics(metrics: Optional[Dict]):
-    """/api/series 是批量接口（keys:[...]）+ 单个共享 metrics，故 metrics 必须按 key 作用域：
-    {key: [指标名,...]}。每个顶层项都得是已注册 key、值是指标名列表；否则 400，
-    避免无作用域的指标选择被静默套到所有 key。"""
-    if not metrics:
+def _entry(e):
+    """window 条目归一为 {start,end,points} dict：兼容 pydantic WindowEntry 与裸 dict。"""
+    if isinstance(e, dict):
+        return e
+    if hasattr(e, "model_dump"):
+        return e.model_dump()
+    return {f: getattr(e, f, None) for f in _WINDOW_FIELDS}
+
+
+def _validate_series_window(window: Optional[Dict], keys: List[str]):
+    """/api/series 与 /records 同构：keys + 按 key 作用域的 map（这里是 window）。
+    window: {key: {start?, end?, points?}}。逐条目自洽校验（无顶层共享默认、无 merge）：
+      ① key 须在 keys 内、且为已注册 C 表；② 条目仅许 {start,end,points}（多余字段 pydantic 已拒为 422）；
+      ③ start/end 成对且 end≥start；④ points 为正整数。任一不满足 → 400/422。"""
+    if not window:
         return
-    bad = [k for k in metrics if k not in REG.keys or not isinstance(metrics[k], list)]
-    if bad:
-        raise HTTPException(
-            status_code=400,
-            detail=(f"metrics 须按 key 作用域，形如 {{\"<key>\": [指标名,...]}}；"
-                    f"以下顶层项不是已注册 key 或值非列表：{bad}。"))
-
-
-def _validate_series_range(start: Optional[str], end: Optional[str]):
-    """时间模式由 start/end 表达：都不传=当前时刻单点；start==end=该时刻单点；end>start=区间。
-    start/end 必须成对出现，且 end 不得早于 start——落单或倒挂直接 400，不静默退化成点查。"""
-    if (start is None) != (end is None):
-        raise HTTPException(
-            status_code=400,
-            detail="start/end 必须成对出现：都不传=当前时刻；二者相等=该时刻单点；end>start=区间。")
-    if start is not None and end is not None:
-        try:
-            s, e = parse_time(start), parse_time(end)
-        except ValueError as ex:
-            raise HTTPException(status_code=400, detail=str(ex))
-        if e < s:
-            raise HTTPException(status_code=400, detail=f"end 不得早于 start：start={start}, end={end}。")
+    for k, raw in window.items():
+        if k not in keys:
+            raise HTTPException(status_code=400, detail=f"window 的 key 不在 keys 内：{k}。")
+        spec = REG.keys.get(k)
+        if spec is None or spec.get("表") != "C":
+            raise HTTPException(status_code=400, detail=f"window 仅作用于 C 表 key：{k} 非 C 表或未注册。")
+        if isinstance(raw, dict):
+            extra = set(raw) - _WINDOW_FIELDS
+            if extra:
+                raise HTTPException(status_code=400, detail=f"window[{k}] 含非法字段 {extra}；仅许 {_WINDOW_FIELDS}。")
+        e = _entry(raw)
+        s, en = e.get("start"), e.get("end")
+        if (s is None) != (en is None):
+            raise HTTPException(status_code=400,
+                                detail=f"window[{k}] 的 start/end 须成对：都不传=当前时刻；相等=单点；end>start=区间。")
+        if s is not None:
+            try:
+                sp, ep = parse_time(s), parse_time(en)
+            except ValueError as ex:
+                raise HTTPException(status_code=400, detail=str(ex))
+            if ep < sp:
+                raise HTTPException(status_code=400, detail=f"window[{k}] end 不得早于 start：{s}~{en}。")
+        p = e.get("points")
+        if p is not None and (not isinstance(p, int) or isinstance(p, bool) or p <= 0):
+            raise HTTPException(status_code=400, detail=f"window[{k}] points 须为正整数：{p}。")
 
 
 # 表 → 对外接口（与 _wrap 的 A→/value、B→/records、C→/series 一致）
@@ -162,19 +196,19 @@ def api_records(q: RecordsQ):
 
 @app.post("/api/series", dependencies=[Depends(require_app)])
 def api_series(q: SeriesQ):
-    _validate_series_metrics(q.metrics)
-    _validate_series_range(q.start, q.end)
+    _validate_series_window(q.window, q.keys)
     data = {}
     for k in q.keys:
-        sel = _metrics_for(q.metrics, k)
-        flt = {"指标": sel} if sel else None
-        r = _wrap(k, resolve(REG, k, filter=flt, start=q.start, end=q.end), "C")
+        e = _entry((q.window or {}).get(k) or {})
+        r = _wrap(k, resolve(REG, k, start=e.get("start"), end=e.get("end"),
+                             points=e.get("points")), "C")
         if "error" in r:
             data[k] = r
         elif "values" in r:
-            data[k] = {"单位": r.get("单位"), "values": r["values"], **({"派生": r["派生"]} if "派生" in r else {})}
+            data[k] = {"单位": r.get("单位"), "values": r["values"],
+                       **({"派生": r["派生"]} if "派生" in r else {})}
         else:
-            data[k] = r.get("data", r)
+            data[k] = r              # note / 分组容器（含 子 列表）
     return {"status": 200, "data": data}
 
 
@@ -193,7 +227,8 @@ def health():
 def list_keys():
     return {"status": 200, "data": [{"key": k, "表": s.get("表"),
                                      "接口": _接口_BY_表.get(s.get("表")),
-                                     "成熟度": s.get("成熟度")}
+                                     "成熟度": s.get("成熟度"),
+                                     **({"分组": True, "子": s.get("子", [])} if s.get("分组") else {})}
                                     for k, s in REG.keys.items()]}
 
 

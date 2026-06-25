@@ -47,6 +47,43 @@ def align(dt: datetime, gmin: int) -> datetime:
     return EPOCH + timedelta(minutes=aligned)
 
 
+DEFAULT_POINTS = 20            # 全局硬默认点数（配置/请求都不给时）
+MAX_POINTS = 2000             # clamp 上限（兼内存护栏）
+
+
+def grid_count(start: datetime, end: datetime, gmin: int) -> int:
+    """[start,end] 内网格点数（算术，不枚举）。"""
+    first = to_min(align(start, gmin))
+    if first < to_min(start):
+        first += gmin
+    last = to_min(end)
+    if first > last:
+        return 0
+    return int((last - first) // gmin) + 1
+
+
+def bucket_samples(start: datetime, end: datetime, gmin: int, n,
+                   量语义: str = "瞬时"):
+    """固定点数 / 自适应比例尺（配置与取数契约 §5.1）：
+    把 [start,end] 切成 N 桶，step=(end−start)/N 随跨度自动缩放；每桶取一个采样时刻——
+      累计 → 桶右端（累计曲线 C(桶末)）；瞬时/离散 → 桶中心。
+    采样时刻 align 到网格，保证落在确定性网格点上、与点查同值。
+    若网格点数 ≤ N，直接逐网格点返回（小跨度不降采样，与历史行为一致）。"""
+    n = max(1, min(int(n or DEFAULT_POINTS), MAX_POINTS))
+    if grid_count(start, end, gmin) <= n:
+        return enumerate_grid(start, end, gmin)
+    span = to_min(end) - to_min(start)
+    cumulative = (量语义 == "累计")
+    out, last = [], None
+    for i in range(n):
+        frac = (i + 1) / n if cumulative else (i + 0.5) / n
+        at = align(EPOCH + timedelta(minutes=to_min(start) + span * frac), gmin)
+        if at != last:
+            out.append(at)
+            last = at
+    return out
+
+
 def enumerate_grid(start: datetime, end: datetime, gmin: int, cap: int = 2000):
     """枚举 [start,end] 内网格点；超过 cap 等间隔降采样（造数引擎降采样契约）。"""
     cur = align(start, gmin)
