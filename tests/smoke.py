@@ -120,6 +120,18 @@ def main():
     assert vs == sorted(vs), "累计分桶应单调不减"
     passed.append(f"累计分桶单调({len(vs)}点)")
 
+    # "当前时刻"按业务时区（APP_TZ），不随容器系统时区（Docker slim 默认 UTC）漂移。
+    # 锁死 now_local() 语义：① 等价于在 APP_TZ 取 now 再 strip tzinfo；
+    # ② 与系统 UTC 的差 = 该时区偏移（默认北京 +8h），从而修复"UTC 容器返回 02:00 而非 10:00"。
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    from app.timegrid import now_local, APP_TZ
+    expect = datetime.now(ZoneInfo(APP_TZ)).replace(tzinfo=None)
+    assert abs((now_local() - expect).total_seconds()) < 5, "now_local 应等于 APP_TZ 墙上时钟"
+    off_h = (now_local() - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds() / 3600
+    assert 7.9 < off_h < 8.1, f"默认 APP_TZ=Asia/Shanghai 应比 UTC 早约 8h，实测 {off_h:.2f}h"
+    passed.append(f"now_local 业务时区(APP_TZ={APP_TZ}, 较UTC{off_h:+.0f}h)")
+
     print("\n" + "=" * 50)
     for p in passed:
         print("  ✅", p)

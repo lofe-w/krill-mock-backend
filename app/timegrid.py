@@ -1,10 +1,41 @@
 """网格对齐 / 区间枚举 / 时间语义（配置与取数契约 §5）。
 简化版 cron 解析：仅支持本项目用到的几种网格。"""
-from datetime import datetime, timedelta
+import os
+import logging
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+_log = logging.getLogger(__name__)
 
 EPOCH = datetime(2026, 1, 1)            # 噪声/网格索引基准
 FMT_DT = "%Y-%m-%d %H:%M:%S"
 FMT_D = "%Y-%m-%d"
+
+# —— 业务时区 ——
+# 全项目的时间语义（网格对齐、累计起点、"当前时刻"）都按业务本地时区理解，
+# 而非容器/宿主的系统时区（Docker slim 默认 UTC）。统一在此读取 APP_TZ。
+# 默认 Asia/Shanghai（北京时间 UTC+8）；需 tzdata（见 requirements.txt）。
+APP_TZ = os.getenv("APP_TZ", "Asia/Shanghai")
+# 兜底偏移：tzdata 缺失/APP_TZ 非法时用它，保住"业务意图的固定偏移"，
+# 而非退回系统时区（在 UTC 容器里会悄悄把要修的 8 小时差重新引入）。默认 +8（北京）。
+_FALLBACK_OFFSET_HOURS = float(os.getenv("APP_TZ_FALLBACK_OFFSET_HOURS", "8"))
+
+
+def now_local() -> datetime:
+    """业务本地时区的"当前时刻"，返回 naive datetime（与全项目 naive 约定一致）。
+
+    刻意去掉 tzinfo：本项目所有时间（EPOCH、parse_time、align）都是 naive 且按业务
+    本地时区解释，混入 aware datetime 会在比较/相减处报错。这里先在 APP_TZ 取得带时区的
+    当前时刻，再 strip tzinfo，得到"墙上时钟"意义的本地 naive 时间。"""
+    try:
+        tz = ZoneInfo(APP_TZ)
+    except Exception:
+        # tzdata 缺失或 APP_TZ 非法 → 用固定偏移兜底（默认 +8），并告警；
+        # 绝不静默退回系统时区，否则 UTC 容器会重新出现 8 小时偏差。
+        _log.warning("无法加载时区 APP_TZ=%r（tzdata 缺失或名称非法），"
+                     "退回固定偏移 UTC%+g 小时。", APP_TZ, _FALLBACK_OFFSET_HOURS)
+        tz = timezone(timedelta(hours=_FALLBACK_OFFSET_HOURS))
+    return datetime.now(tz).replace(tzinfo=None)
 
 
 def parse_time(s):

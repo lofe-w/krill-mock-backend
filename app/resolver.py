@@ -6,7 +6,7 @@ import operator
 import re
 from datetime import datetime
 from .timegrid import (parse_time, grid_minutes, align, bucket_samples,
-                       to_min, EPOCH, DEFAULT_POINTS, MAX_POINTS)
+                       to_min, EPOCH, DEFAULT_POINTS, MAX_POINTS, now_local)
 from .generators import GENERATORS
 
 # —— 安全算术求值（仅 + - * / ** 和括号，无名字/调用）——
@@ -166,7 +166,7 @@ def _emit(reg, key, value_fn, dt_point, rng, gmin, n=None, 量语义=None):
         val = ov if ov is not None else value_fn(dt)
         return {"time": align(dt, gmin).strftime("%Y-%m-%d %H:%M:%S"), "value": val}
     if dt_point is not None or (rng[0] is None and rng[1] is None):
-        return [one(dt_point or datetime.now())]
+        return [one(dt_point or now_local())]   # "当前时刻"按业务时区，非容器 UTC
     return [one(dt) for dt in bucket_samples(rng[0], rng[1], gmin, n, 量语义 or "瞬时")]
 
 
