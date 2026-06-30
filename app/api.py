@@ -4,7 +4,8 @@
 鉴权：.env 写死两个 Token，前端/运维以 Authorization: Bearer <token> 传入。
 CORS：浏览器跨域调用需开启（见 CORS_ORIGINS）。"""
 import os
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 from typing import Optional, Dict, Any, List
@@ -29,27 +30,27 @@ app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials
 REG = load()
 
 
-def _bearer(authorization: Optional[str]):
-    if authorization and authorization.startswith("Bearer "):
-        return authorization[len("Bearer "):].strip()
-    return None
+# HTTPBearer 安全方案：让 Swagger /docs 出现「Authorize 🔓」按钮，
+# 填一次 token 后所有受保护接口自动带 Authorization 头。
+# auto_error=False：自行返回 401 + 中文提示，并兼容 AUTH_ENABLED=false。
+_bearer_scheme = HTTPBearer(auto_error=False, description="TOKEN")
 
 
-def require_app(authorization: Optional[str] = Header(None)):
+def require_app(cred: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme)):
     """使用侧：使用侧 Token 或运维侧 Token 均可（运维侧权限更高）。"""
     if not AUTH_ENABLED:
         return
-    tok = _bearer(authorization)
+    tok = cred.credentials.strip() if cred and cred.credentials else None
     if tok and tok in (TOKEN_APP, TOKEN_OPS) and tok != "":
         return
     raise HTTPException(status_code=401, detail="缺少或无效的使用侧 Token（Authorization: Bearer <API_TOKEN_APP>）")
 
 
-def require_ops(authorization: Optional[str] = Header(None)):
+def require_ops(cred: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme)):
     """运维侧：仅运维侧 Token。"""
     if not AUTH_ENABLED:
         return
-    tok = _bearer(authorization)
+    tok = cred.credentials.strip() if cred and cred.credentials else None
     if tok and tok == TOKEN_OPS and tok != "":
         return
     raise HTTPException(status_code=401, detail="缺少或无效的运维侧 Token（Authorization: Bearer <API_TOKEN_OPS>）")
