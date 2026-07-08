@@ -34,6 +34,17 @@ def main():
     assert a["status"] == 200 and a["value"]["IMO"] == "9849332"
     passed.append("A 端到端")
 
+    # A·渔季：按当前时间返回「当前渔季」单对象（非列表）
+    from app.timegrid import now_local, parse_time
+    fs = resolve(reg, "渔季")
+    show("A 渔季(当前)", fs)
+    assert fs["status"] == 200
+    assert isinstance(fs["value"], dict), "渔季应返回单个当前渔季对象，而非列表"
+    _st, _en = parse_time(fs["value"]["开始"]), parse_time(fs["value"]["结束"])
+    _now = now_local().replace(tzinfo=None)
+    assert _st <= _now <= _en, f"当前时间 {_now} 不在返回渔季 [{_st},{_en}] 内"
+    passed.append(f"A 渔季按时间返回当前({fs['value']['名称']})")
+
     # B
     b = resolve(reg, "溯源", filter={"产品批号": "2606AKM01"})
     show("B 溯源/2606AKM01", b)
@@ -61,8 +72,8 @@ def main():
     passed.append(f"C 区间枚举({len(c1r['values'])}点)")
 
     # C 累计（单调 + 确定性）
-    c2a = resolve(reg, "船舶.捕捞.累计产量.泵吸", start="2026-06-18 12:00:00", end="2026-06-18 12:00:00")
-    c2b = resolve(reg, "船舶.捕捞.累计产量.泵吸", start="2026-06-18 18:00:00", end="2026-06-18 18:00:00")
+    c2a = resolve(reg, "船舶.捕捞系统.累计产量.泵吸", start="2026-06-18 12:00:00", end="2026-06-18 12:00:00")
+    c2b = resolve(reg, "船舶.捕捞系统.累计产量.泵吸", start="2026-06-18 18:00:00", end="2026-06-18 18:00:00")
     show("C 累计 12:00", c2a); show("C 累计 18:00", c2b)
     assert c2b["values"][0]["value"] >= c2a["values"][0]["value"], "累计非单调！"
     passed.append("C 累计(单调)")
@@ -87,7 +98,7 @@ def main():
     passed.append("B 设备台账多记录")
 
     # 派生：虾油得率应≈18%（金蝶真实出油率，=成品油/虾粉）——扁平化后直接查叶子 key
-    d = resolve(reg, "工厂.虾油线.生产数据.虾油得率", start=T, end=T)
+    d = resolve(reg, "工厂.虾油提取生产线.生产数据.虾油得率", start=T, end=T)
     yv = d["values"][0]["value"]
     show("派生 虾油得率", d)
     assert 13 <= yv <= 27, f"得率 {yv} 不在真实区间"
@@ -114,7 +125,7 @@ def main():
     passed.append(f"固定点数分桶(年查 points=12→{len(sr['values'])}点, 默认→{len(sr20['values'])}点)")
 
     # 累计型分桶取桶右端：单调不减
-    cum = resolve(reg, "船舶.捕捞.累计产量.泵吸",
+    cum = resolve(reg, "船舶.捕捞系统.累计产量.泵吸",
                   start="2026-06-18 00:00:00", end="2026-06-18 23:59:00", points=8)
     vs = [p["value"] for p in cum["values"]]
     assert vs == sorted(vs), "累计分桶应单调不减"

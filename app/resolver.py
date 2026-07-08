@@ -43,21 +43,40 @@ def _origin_min(rule, reg, dt):
     return to_min(o)
 
 
-def _season_start(reg, dt):
-    for s in (reg.keys.get("渔季") or {}).get("value", []):
+def _current_season(reg, dt):
+    """按当前时间选出所处渔季（单个 {名称,开始,结束}）。
+    命中返回该渔季；未命中则回退到「最近一个已开始」的渔季，再兜底首个。
+    渔季边界为 date（naive），与 now_local() 的 aware dt 比较前先去掉时区。"""
+    if dt is None:
+        dt = now_local()
+    if getattr(dt, "tzinfo", None) is not None:
+        dt = dt.replace(tzinfo=None)
+    seasons = (reg.keys.get("渔季") or {}).get("value", []) or []
+    best_past, best_past_st = None, None
+    for s in seasons:
         try:
             st, en = parse_time(s["开始"]), parse_time(s["结束"])
         except Exception:
             continue
-        if en < st:
+        if st is None or en is None:
+            continue
+        if en < st:                       # 跨年环绕边界
             if dt >= st or dt <= en:
-                return st
+                return s
         elif st <= dt <= en:
-            return st
-    seasons = (reg.keys.get("渔季") or {}).get("value", [])
-    if seasons:
+            return s
+        if st <= dt and (best_past_st is None or st > best_past_st):
+            best_past, best_past_st = s, st
+    return best_past or (seasons[0] if seasons else None)
+
+
+def _season_start(reg, dt):
+    s = _current_season(reg, dt)
+    if s:
         try:
-            return parse_time(seasons[0]["开始"])
+            st = parse_time(s.get("开始"))
+            if st is not None:
+                return st
         except Exception:
             pass
     return EPOCH
@@ -189,6 +208,10 @@ def resolve(reg, key, filter=None, start=None, end=None, points=None):
     table = spec.get("表")
 
     if table == "A":
+        # 渔季：按当前时间返回「当前渔季」单对象（而非整张区间列表）。
+        if key == "渔季":
+            return {"status": 200, "key": key, "表": "A",
+                    "value": _current_season(reg, now_local())}
         return {"status": 200, "key": key, "表": "A", "value": spec.get("value")}
 
     if table == "B":
