@@ -4,3 +4,5 @@ __pycache__/
 data/*.db
 .env
 assets/streams/*.mp4
+.DS_Store
+**/.DS_Store

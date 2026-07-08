@@ -61,7 +61,7 @@ def require_ops(cred: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_s
 # 默认渲染的 additionalProp1/2，使 /docs 的示例即一条可直接联调的真请求。
 class ValueQ(BaseModel):
     model_config = ConfigDict(json_schema_extra={
-        "example": {"keys": ["船舶.信息", "工厂.虾油线.设计能力"]}})
+        "example": {"keys": ["船舶.信息", "工厂.虾油提取生产线.设计能力"]}})
     keys: List[str]
 
 

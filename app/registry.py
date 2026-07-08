@@ -132,7 +132,7 @@ def _build_derivations(constraints):
 
 
 # —— 静态自检：只验证"跨 key 引用"——即以 船舶./工厂. 开头的全限定数据 key ——
-# （指标子名如 MVR2500.真空度、constraints 段名如 物料守恒.虾油线 不以此开头，自然排除）
+# （指标子名如 MVR2500.真空度、constraints 段名如 物料守恒.虾油提取生产线 不以此开头，自然排除）
 _KEY_RE = re.compile(r"[一-鿿A-Za-z0-9]+(?:\.[一-鿿A-Za-z0-9]+)+")
 
 
