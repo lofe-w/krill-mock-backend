@@ -90,6 +90,7 @@ def main():
     pv = nav["values"][0]["value"]
     assert set(["经度", "纬度", "航速", "航向"]).issubset(pv.keys())
     assert -180 <= pv["经度"] <= 180 and 0 <= pv["航速"] <= 60
+    assert -65 <= pv["纬度"] <= -60, f"船位未落在南极磷虾作业海域: {pv}"
     passed.append("航迹(派生4量)")
 
     # override 生效（设备故障剧情）
