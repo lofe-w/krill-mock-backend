@@ -40,6 +40,67 @@ class Registry:
         return False
 
 
+def _deprecated_payload(key, dep, alias_of=None):
+    """把注册表里的 deprecated 声明归一成 API warning / /api/keys 元信息。"""
+    if not isinstance(dep, dict):
+        dep = {}
+    replaced_by = dep.get("replaced_by") or alias_of
+    payload = {
+        "type": "deprecated_key",
+        "key": key,
+        "message": "该 key 已废弃，请迁移到新 key" if replaced_by else "该 key 已废弃，请尽快迁移",
+    }
+    for src, dst in (
+        ("since", "since"),
+        ("remove_after", "remove_after"),
+        ("reason", "reason"),
+    ):
+        if dep.get(src) is not None:
+            payload[dst] = dep[src]
+    if replaced_by:
+        payload["replaced_by"] = replaced_by
+    return payload
+
+
+def compatibility_warnings(reg: Registry, requested_key: str):
+    """返回本次请求命中的兼容性提示。
+
+    当前仅做 key 级提示：deprecated / alias_of。没有相关配置时返回空列表，
+    API 响应保持既有形状，不额外增加 warnings 字段。
+    """
+    spec = reg.keys.get(requested_key)
+    if not spec:
+        return []
+    out = []
+    alias_of = spec.get("alias_of")
+    if spec.get("deprecated") is not None:
+        out.append(_deprecated_payload(requested_key, spec.get("deprecated"), alias_of))
+    elif alias_of:
+        out.append({
+            "type": "alias_key",
+            "key": requested_key,
+            "replaced_by": alias_of,
+            "message": "该 key 是兼容 alias，建议迁移到目标 key",
+        })
+    return out
+
+
+def contract_meta(spec):
+    """提取对外契约元信息，供 /api/keys 暴露给前端自检。"""
+    meta = {}
+    if spec.get("alias_of"):
+        meta["alias_of"] = spec["alias_of"]
+    if spec.get("deprecated") is not None:
+        dep = _deprecated_payload(spec.get("key"), spec.get("deprecated"), spec.get("alias_of"))
+        meta["deprecated"] = True
+        for k in ("since", "remove_after", "replaced_by", "reason"):
+            if dep.get(k) is not None:
+                meta[k] = dep[k]
+    if spec.get("fields"):
+        meta["fields"] = spec["fields"]
+    return meta
+
+
 def load() -> Registry:
     reg = Registry()
     for path in sorted(glob.glob(os.path.join(CONFIG, "registry", "*.yaml"))):

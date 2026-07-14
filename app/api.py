@@ -14,7 +14,7 @@ try:
     load_dotenv()                       # 本机运行时加载 .env；docker 用 env_file 注入
 except Exception:
     pass
-from .registry import load, selfcheck
+from .registry import load, selfcheck, compatibility_warnings, contract_meta
 from .resolver import resolve
 from .timegrid import parse_time
 
@@ -175,6 +175,27 @@ def _wrap(key, r, want_table):
     return r
 
 
+def _warnings_for(keys):
+    out = []
+    seen = set()
+    for k in keys:
+        for w in compatibility_warnings(REG, k):
+            ident = (w.get("type"), w.get("key"), w.get("replaced_by"))
+            if ident in seen:
+                continue
+            seen.add(ident)
+            out.append(w)
+    return out
+
+
+def _response(data, keys):
+    resp = {"status": 200, "data": data}
+    warnings = _warnings_for(keys)
+    if warnings:
+        resp["warnings"] = warnings
+    return resp
+
+
 # —— 使用侧（前端）——
 @app.post("/api/value", dependencies=[Depends(require_app)])
 def api_value(q: ValueQ):
@@ -182,7 +203,7 @@ def api_value(q: ValueQ):
     for k in q.keys:
         r = _wrap(k, resolve(REG, k), "A")
         data[k] = r if "error" in r else r.get("value")
-    return {"status": 200, "data": data}
+    return _response(data, q.keys)
 
 
 @app.post("/api/records", dependencies=[Depends(require_app)])
@@ -192,7 +213,7 @@ def api_records(q: RecordsQ):
     for k in q.keys:
         r = _wrap(k, resolve(REG, k, filter=_filter_for(q.filter, k)), "B")
         data[k] = r if "error" in r else r.get("data")
-    return {"status": 200, "data": data}
+    return _response(data, q.keys)
 
 
 @app.post("/api/series", dependencies=[Depends(require_app)])
@@ -210,7 +231,7 @@ def api_series(q: SeriesQ):
                        **({"派生": r["派生"]} if "派生" in r else {})}
         else:
             data[k] = r              # note / 分组容器（含 子 列表）
-    return {"status": 200, "data": data}
+    return _response(data, q.keys)
 
 
 # —— 公开：存活探测 ——
@@ -229,6 +250,7 @@ def list_keys():
     return {"status": 200, "data": [{"key": k, "表": s.get("表"),
                                      "接口": _接口_BY_表.get(s.get("表")),
                                      "成熟度": s.get("成熟度"),
+                                     **contract_meta(s),
                                      **({"分组": True, "子": s.get("子", [])} if s.get("分组") else {})}
                                     for k, s in REG.keys.items()]}
 

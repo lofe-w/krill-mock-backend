@@ -6,7 +6,7 @@
 import os, sys, json
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.registry import load, selfcheck
+from app.registry import load, selfcheck, compatibility_warnings, contract_meta
 from app.resolver import resolve
 
 T = "2026-06-18 12:00:00"
@@ -124,6 +124,27 @@ def main():
                    start="2026-01-01 00:00:00", end="2026-12-31 00:00:00")
     assert len(sr20["values"]) <= 20, f"默认点数={len(sr20['values'])}"
     passed.append(f"固定点数分桶(年查 points=12→{len(sr['values'])}点, 默认→{len(sr20['values'])}点)")
+
+    # 联调兼容层：内存构造旧 key alias，不改真实 YAML。旧 key 可解析到新 key，并产生 deprecated warning。
+    reg.keys["测试.旧海水温度"] = {
+        "key": "测试.旧海水温度",
+        "表": "C",
+        "alias_of": "船舶.海况.海水温度",
+        "deprecated": {
+            "since": "1.1.0",
+            "remove_after": "2026-08-15",
+            "replaced_by": "船舶.海况.海水温度",
+            "reason": "联调兼容层测试",
+        },
+    }
+    old = resolve(reg, "测试.旧海水温度", start=T, end=T)
+    new = resolve(reg, "船舶.海况.海水温度", start=T, end=T)
+    assert old["status"] == 200 and old["values"] == new["values"], "alias_of 应透明解析到目标 key"
+    warns = compatibility_warnings(reg, "测试.旧海水温度")
+    meta = contract_meta(reg.keys["测试.旧海水温度"])
+    assert warns and warns[0]["type"] == "deprecated_key"
+    assert meta["deprecated"] is True and meta["replaced_by"] == "船舶.海况.海水温度"
+    passed.append("联调兼容层(alias_of/deprecated 元信息)")
 
     # 累计型分桶取桶右端：单调不减
     cum = resolve(reg, "船舶.捕捞系统.累计产量.泵吸",

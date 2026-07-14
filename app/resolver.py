@@ -201,8 +201,27 @@ def _resolve_points(spec, points):
     return max(1, min(n, MAX_POINTS))
 
 
+def _follow_alias(reg, key):
+    """alias_of 兼容旧 key：旧 key 可透明解析到新 key，避免前端联调期突然 404。"""
+    seen = []
+    cur = key
+    while True:
+        if cur in seen:
+            return cur, None, f"alias_of 存在循环: {' -> '.join(seen + [cur])}"
+        seen.append(cur)
+        spec = reg.keys.get(cur)
+        if spec is None:
+            return cur, None, None
+        nxt = spec.get("alias_of")
+        if not nxt:
+            return cur, spec, None
+        cur = nxt
+
+
 def resolve(reg, key, filter=None, start=None, end=None, points=None):
-    spec = reg.keys.get(key)
+    key, spec, alias_error = _follow_alias(reg, key)
+    if alias_error:
+        return {"status": 404, "key": key, "msg": alias_error}
     if spec is None:
         return {"status": 404, "key": key, "msg": f"key 未注册: {key}"}
     table = spec.get("表")
