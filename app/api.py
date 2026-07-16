@@ -196,6 +196,13 @@ def _response(data, keys):
     return resp
 
 
+def _series_payload(r):
+    payload = {"显示": r.get("显示"), "单位": r.get("单位"), "values": r.get("values", [])}
+    if "派生" in r:
+        payload["派生"] = r["派生"]
+    return payload
+
+
 # —— 使用侧（前端）——
 @app.post("/api/value", dependencies=[Depends(require_app)])
 def api_value(q: ValueQ):
@@ -227,8 +234,15 @@ def api_series(q: SeriesQ):
         if "error" in r:
             data[k] = r
         elif "values" in r:
-            data[k] = {"单位": r.get("单位"), "values": r["values"],
-                       **({"派生": r["派生"]} if "派生" in r else {})}
+            data[k] = _series_payload(r)
+        elif r.get("分组"):
+            for child in r.get("子", []):
+                cr = _wrap(child, resolve(REG, child, start=e.get("start"), end=e.get("end"),
+                                          points=e.get("points")), "C")
+                if "error" in cr:
+                    data[child] = cr
+                else:
+                    data[child] = _series_payload(cr)
         else:
             data[k] = r              # note / 分组容器（含 子 列表）
     return _response(data, q.keys)

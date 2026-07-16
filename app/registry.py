@@ -96,8 +96,9 @@ def contract_meta(spec):
         for k in ("since", "remove_after", "replaced_by", "reason"):
             if dep.get(k) is not None:
                 meta[k] = dep[k]
-    if spec.get("fields"):
-        meta["fields"] = spec["fields"]
+    for field in ("fields", "显示"):
+        if spec.get(field):
+            meta[field] = spec[field]
     return meta
 
 
@@ -136,7 +137,7 @@ def load() -> Registry:
 # 独立子 key（继承父的 网格/量语义/成熟度，记 _组 供派生兄弟项解析），
 # 父条目降为「分组」元数据（保留 子 列表，供 /api/keys 发现，不再作为时序被查）。
 # 展开后种子名 = f"{父key}.{指标名}"，与旧 resolver 的 fk 完全一致 → 生成值逐字不变。
-_CHILD_INHERIT = ("单位", "规则", "派生", "区间", "不变式", "说明",
+_CHILD_INHERIT = ("单位", "规则", "派生", "区间", "不变式", "说明", "显示",
                   "目标成熟度", "默认点数", "网格", "量语义")
 
 

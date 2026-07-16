@@ -263,7 +263,8 @@ def resolve(reg, key, filter=None, start=None, end=None, points=None):
         rule = _rule_of(spec)
         if rule:
             vf = lambda dt: _gen_point(rule, key, dt, gmin, reg)
-            resp = {"status": 200, "key": key, "表": "C", "单位": spec.get("单位"),
+            resp = {"status": 200, "key": key, "表": "C", "显示": spec.get("显示"),
+                    "单位": spec.get("单位"),
                     "values": _emit(reg, key, vf, dt_point, rng, gmin, n, 量语义)}
             if maturity == "真值采集":
                 resp["note"] = "真值采集·当前用 fallback 规则（待真实源就绪切换）"
@@ -273,7 +274,8 @@ def resolve(reg, key, filter=None, start=None, end=None, points=None):
             expr = reg.derivations.get(key) or spec.get("派生")
             rngc = spec.get("区间")
             vf = lambda dt: eval_derived(reg, key, expr, dt, rngc)
-            return {"status": 200, "key": key, "表": "C", "单位": spec.get("单位"),
+            return {"status": 200, "key": key, "表": "C", "显示": spec.get("显示"),
+                    "单位": spec.get("单位"),
                     "派生": expr, "values": _emit(reg, key, vf, dt_point, rng, gmin, n, 量语义)}
 
         return {"status": 200, "key": key, "表": "C",

@@ -115,6 +115,23 @@ def main():
     assert g.get("分组") and "船舶.海况.海水温度" in g.get("子", [])
     passed.append(f"分组容器(海况→{len(g['子'])}子key)")
 
+    # /api/series 支持把分组 key 展开成子 key，响应形状等同直接传所有子 key；显示 随叶子 key 返回。
+    from app.api import api_series, SeriesQ
+    ship_group = api_series(SeriesQ(keys=["船舶信息模型"],
+                                    window={"船舶信息模型": {"start": T, "end": T}}))
+    ship_children = [
+        "船舶信息模型.船舶方位-经度",
+        "船舶信息模型.船舶方位-维度",
+        "船舶信息模型.艏向",
+        "船舶信息模型.航速",
+    ]
+    ship_direct = api_series(SeriesQ(keys=ship_children,
+                                     window={k: {"start": T, "end": T} for k in ship_children}))
+    assert set(ship_group["data"]) == set(ship_children), "分组 key 应展开为子 key 数据，不返回分组包装"
+    assert ship_group["data"] == ship_direct["data"], "分组 key 查询应等同直接传所有子 key"
+    assert ship_group["data"]["船舶信息模型.船舶方位-经度"]["显示"] == "船舶方位-经度"
+    passed.append("series 分组展开(等同子keys) + 显示")
+
     # 固定点数：区间分桶。查一年用 points=12 → 恰 12 点（自适应比例尺）
     sr = resolve(reg, "船舶.海况.海水温度",
                  start="2026-01-01 00:00:00", end="2026-12-31 00:00:00", points=12)
