@@ -103,18 +103,71 @@ def _filter_for(filter: Optional[Dict], key: str):
     return (filter or {}).get(key)
 
 
+def _same_table_descendants(key: str, want_table: str):
+    """返回同表后代叶子 key。
+
+    key 可以是已注册分组，也可以只是一个路径前缀。比如请求 `船舶` 到
+    /api/series 时，只展开 C 表下 `船舶.*` 的叶子 key，不混入 A/B。
+    """
+    spec = REG.keys.get(key)
+    if spec and spec.get("分组") and spec.get("表") == want_table:
+        candidates = spec.get("子", [])
+    else:
+        candidates = [k for k in REG.keys if k.startswith(key + ".")]
+    return [k for k in candidates
+            if (REG.keys.get(k) or {}).get("表") == want_table
+            and not (REG.keys.get(k) or {}).get("分组")]
+
+
+def _expand_for_table(key: str, want_table: str):
+    """把请求 key 展开为本接口应返回的实际 key 列表。
+
+    - 精确叶子 key：返回自身，保持旧调用兼容。
+    - 分组 key：返回它的子 key。
+    - 未注册父系前缀：返回所有同表后代 key。
+    - 找不到：返回原 key，让后续 _wrap 给出原有错误形状。
+    """
+    spec = REG.keys.get(key)
+    if spec and spec.get("表") == want_table and not spec.get("分组"):
+        return [key]
+    descendants = _same_table_descendants(key, want_table)
+    if descendants:
+        return descendants
+    return [key]
+
+
+def _expanded_request_pairs(keys: List[str], want_table: str):
+    """保留请求 key 与展开后 key 的对应关系，供 window/filter 继承使用。"""
+    out = []
+    seen = set()
+    for requested in keys:
+        for actual in _expand_for_table(requested, want_table):
+            ident = (requested, actual)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            out.append((requested, actual))
+    return out
+
+
 def _validate_records_filter(filter: Optional[Dict]):
     """/api/records 是批量接口（keys:[...]）+ 单个共享 filter，故 filter 必须按 key 作用域：
     {key: {字段: 值}}。每个顶层项都得是已注册 key、值是该 key 的过滤条件对象；
     否则 400，避免无作用域的过滤条件被静默套到所有 key（或退化成不过滤、返回全部）。"""
     if not filter:
         return
-    bad = [k for k in filter if k not in REG.keys or not isinstance(filter[k], dict)]
+    bad = []
+    for k, v in filter.items():
+        spec = REG.keys.get(k)
+        is_b_key = spec is not None and spec.get("表") == "B"
+        is_b_prefix = bool(_same_table_descendants(k, "B"))
+        if not isinstance(v, dict) or not (is_b_key or is_b_prefix):
+            bad.append(k)
     if bad:
         raise HTTPException(
             status_code=400,
             detail=(f"filter 须按 key 作用域，形如 {{\"<key>\": {{字段: 值}}}}；"
-                    f"以下顶层项不是已注册 key 或值非对象：{bad}。"))
+                    f"以下顶层项不是已注册 B 表 key/B 表父系前缀，或值非对象：{bad}。"))
 
 
 _WINDOW_FIELDS = {"start", "end", "points"}
@@ -139,9 +192,11 @@ def _validate_series_window(window: Optional[Dict], keys: List[str]):
     for k, raw in window.items():
         if k not in keys:
             raise HTTPException(status_code=400, detail=f"window 的 key 不在 keys 内：{k}。")
-        spec = REG.keys.get(k)
-        if spec is None or spec.get("表") != "C":
-            raise HTTPException(status_code=400, detail=f"window 仅作用于 C 表 key：{k} 非 C 表或未注册。")
+        if not _expand_for_table(k, "C") or (
+            _expand_for_table(k, "C") == [k]
+            and ((REG.keys.get(k) or {}).get("表") != "C")
+        ):
+            raise HTTPException(status_code=400, detail=f"window 仅作用于 C 表 key 或 C 表父系前缀：{k}。")
         if isinstance(raw, dict):
             extra = set(raw) - _WINDOW_FIELDS
             if extra:
@@ -207,7 +262,7 @@ def _series_payload(r):
 @app.post("/api/value", dependencies=[Depends(require_app)])
 def api_value(q: ValueQ):
     data = {}
-    for k in q.keys:
+    for requested, k in _expanded_request_pairs(q.keys, "A"):
         r = _wrap(k, resolve(REG, k), "A")
         data[k] = r if "error" in r else r.get("value")
     return _response(data, q.keys)
@@ -217,8 +272,8 @@ def api_value(q: ValueQ):
 def api_records(q: RecordsQ):
     _validate_records_filter(q.filter)
     data = {}
-    for k in q.keys:
-        r = _wrap(k, resolve(REG, k, filter=_filter_for(q.filter, k)), "B")
+    for requested, k in _expanded_request_pairs(q.keys, "B"):
+        r = _wrap(k, resolve(REG, k, filter=_filter_for(q.filter, requested) or _filter_for(q.filter, k)), "B")
         data[k] = r if "error" in r else r.get("data")
     return _response(data, q.keys)
 
@@ -227,22 +282,14 @@ def api_records(q: RecordsQ):
 def api_series(q: SeriesQ):
     _validate_series_window(q.window, q.keys)
     data = {}
-    for k in q.keys:
-        e = _entry((q.window or {}).get(k) or {})
+    for requested, k in _expanded_request_pairs(q.keys, "C"):
+        e = _entry((q.window or {}).get(requested) or (q.window or {}).get(k) or {})
         r = _wrap(k, resolve(REG, k, start=e.get("start"), end=e.get("end"),
                              points=e.get("points")), "C")
         if "error" in r:
             data[k] = r
         elif "values" in r:
             data[k] = _series_payload(r)
-        elif r.get("分组"):
-            for child in r.get("子", []):
-                cr = _wrap(child, resolve(REG, child, start=e.get("start"), end=e.get("end"),
-                                          points=e.get("points")), "C")
-                if "error" in cr:
-                    data[child] = cr
-                else:
-                    data[child] = _series_payload(cr)
         else:
             data[k] = r              # note / 分组容器（含 子 列表）
     return _response(data, q.keys)

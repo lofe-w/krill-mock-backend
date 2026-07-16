@@ -115,8 +115,8 @@ def main():
     assert g.get("分组") and "船舶.海况.海水温度" in g.get("子", [])
     passed.append(f"分组容器(海况→{len(g['子'])}子key)")
 
-    # /api/series 支持把分组 key 展开成子 key，响应形状等同直接传所有子 key；显示 随叶子 key 返回。
-    from app.api import api_series, SeriesQ
+    # /api/series 支持把分组 key/父系前缀展开成子 key，响应形状等同直接传所有子 key；显示 随叶子 key 返回。
+    from app.api import api_series, api_value, SeriesQ, ValueQ
     ship_group = api_series(SeriesQ(keys=["船舶信息模型"],
                                     window={"船舶信息模型": {"start": T, "end": T}}))
     ship_children = [
@@ -130,7 +130,14 @@ def main():
     assert set(ship_group["data"]) == set(ship_children), "分组 key 应展开为子 key 数据，不返回分组包装"
     assert ship_group["data"] == ship_direct["data"], "分组 key 查询应等同直接传所有子 key"
     assert ship_group["data"]["船舶信息模型.船舶方位-经度"]["显示"] == "船舶方位-经度"
-    passed.append("series 分组展开(等同子keys) + 显示")
+    pump_prefix = api_series(SeriesQ(keys=["船舶.桁杆泵吸系统"],
+                                     window={"船舶.桁杆泵吸系统": {"start": T, "end": T}}))
+    assert "船舶.桁杆泵吸系统.运行参数.拖网航速" in pump_prefix["data"]
+    assert all(k.startswith("船舶.桁杆泵吸系统.") for k in pump_prefix["data"])
+    catch_value = api_value(ValueQ(keys=["船舶捕捞【产量信息】"]))
+    assert "船舶捕捞【产量信息】.桁杆连续泵吸捕捞系统.主要参数" in catch_value["data"]
+    assert not any(k.startswith("3.") for k in catch_value["data"])
+    passed.append("series/value 分组与父系前缀展开(等同子keys) + 显示")
 
     # 固定点数：区间分桶。查一年用 points=12 → 恰 12 点（自适应比例尺）
     sr = resolve(reg, "船舶.海况.海水温度",
