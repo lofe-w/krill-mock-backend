@@ -239,12 +239,6 @@ def resolve(reg, key, filter=None, start=None, end=None, points=None):
         return {"status": 200, "key": key, "表": "B", "data": out}
 
     if table == "C":
-        # 分组容器（原指标 dict 父节点）：不是时序，给出子 key 供前端发现
-        if spec.get("分组"):
-            return {"status": 200, "key": key, "表": "C", "分组": True,
-                    "子": spec.get("子", []),
-                    "note": "分组 key（容器），请查询其下具体子 key"}
-
         gmin = grid_minutes(spec.get("网格"))
         量语义 = spec.get("量语义")
         n = _resolve_points(spec, points)

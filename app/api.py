@@ -106,29 +106,23 @@ def _filter_for(filter: Optional[Dict], key: str):
 def _same_table_descendants(key: str, want_table: str):
     """返回同表后代叶子 key。
 
-    key 可以是已注册分组，也可以只是一个路径前缀。比如请求 `船舶` 到
-    /api/series 时，只展开 C 表下 `船舶.*` 的叶子 key，不混入 A/B。
+    key 可以是任意路径前缀。比如请求 `船舶` 到 /api/series 时，
+    只展开 C 表下 `船舶.*` 的叶子 key，不混入 A/B。
     """
-    spec = REG.keys.get(key)
-    if spec and spec.get("分组") and spec.get("表") == want_table:
-        candidates = spec.get("子", [])
-    else:
-        candidates = [k for k in REG.keys if k.startswith(key + ".")]
+    candidates = [k for k in REG.keys if k.startswith(key + ".")]
     return [k for k in candidates
-            if (REG.keys.get(k) or {}).get("表") == want_table
-            and not (REG.keys.get(k) or {}).get("分组")]
+            if (REG.keys.get(k) or {}).get("表") == want_table]
 
 
 def _expand_for_table(key: str, want_table: str):
     """把请求 key 展开为本接口应返回的实际 key 列表。
 
     - 精确叶子 key：返回自身，保持旧调用兼容。
-    - 分组 key：返回它的子 key。
-    - 未注册父系前缀：返回所有同表后代 key。
+    - 父系前缀：返回所有同表后代 key。
     - 找不到：返回原 key，让后续 _wrap 给出原有错误形状。
     """
     spec = REG.keys.get(key)
-    if spec and spec.get("表") == want_table and not spec.get("分组"):
+    if spec and spec.get("表") == want_table:
         return [key]
     descendants = _same_table_descendants(key, want_table)
     if descendants:
@@ -291,7 +285,7 @@ def api_series(q: SeriesQ):
         elif "values" in r:
             data[k] = _series_payload(r)
         else:
-            data[k] = r              # note / 分组容器（含 子 列表）
+            data[k] = r              # note / 占位说明项
     return _response(data, q.keys)
 
 
@@ -311,8 +305,7 @@ def list_keys():
     return {"status": 200, "data": [{"key": k, "表": s.get("表"),
                                      "接口": _接口_BY_表.get(s.get("表")),
                                      "成熟度": s.get("成熟度"),
-                                     **contract_meta(s),
-                                     **({"分组": True, "子": s.get("子", [])} if s.get("分组") else {})}
+                                     **contract_meta(s)}
                                     for k, s in REG.keys.items()]}
 
 
