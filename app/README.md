@@ -30,4 +30,4 @@ uvicorn app.main:app --port 8000   # 起服务
 - B 多记录（设备台账分产线）。override 钩子就绪。
 
 > 当前为"先纵切验证整条链"的最小实现：每表代表 key 已端到端跑通。
-> 待办：`指标` 多指标批量 / `派生`(得率/百分比) 与 `引用` 的求值接入 constraints / 真值采集 provider（待 Q3/Q5）/ HTTP 层联调（沙箱无 fastapi，api.py 为薄包装，随真实环境联调）。
+> 待办：真值采集 provider（待 Q3/Q5）/ HTTP 层联调（沙箱无 fastapi，api.py 为薄包装，随真实环境联调）。

@@ -82,15 +82,12 @@ def _season_start(reg, dt):
     return EPOCH
 
 
-def _rule_of(spec, 指标=None):
-    """取一个 C 条目的规则：单 规则 / fallback / 指标[选中]。"""
+def _rule_of(spec):
+    """取一个 C 条目的规则：单 规则 / fallback。"""
     rule = spec.get("规则")
     if rule is None and spec.get("fallback"):
         fb = spec["fallback"]
         rule = fb.get("规则") or fb
-    if rule is None and 指标 and isinstance(spec.get("指标"), dict):
-        m = spec["指标"].get(指标) or {}
-        rule = m.get("规则")
     return rule
 
 
@@ -103,32 +100,27 @@ def _gen_point(rule, key, dt, gmin, reg):
     return fn(rule, key, t_min, ctx)
 
 
-def _c_point(reg, key, dt, 指标=None):
+def _c_point(reg, key, dt):
     """直接算一个 C 规则点（供派生/引用取标量；不递归派生）。"""
     spec = reg.keys.get(key)
     if not spec or spec.get("表") != "C":
         return None
     gmin = grid_minutes(spec.get("网格"))
-    rule = _rule_of(spec, 指标)
+    rule = _rule_of(spec)
     if not rule:
         return None
-    name = key if not 指标 else f"{key}.{指标}"
-    return _gen_point(rule, name, dt, gmin, reg)
+    return _gen_point(rule, key, dt, gmin, reg)
 
 
 def _resolve_ident(reg, derived_key, idn, dt):
-    """派生表达式里的标识符 → 数值：①全限定 key；②同组兄弟项（扁平化后 = 组前缀 + 标识符）。"""
-    best = None
-    for k in reg.keys:
-        if idn == k or idn.startswith(k + "."):
-            if best is None or len(k) > len(best):
-                best = k
-    if best:
-        sub = idn[len(best) + 1:] if idn != best else None
-        return _c_point(reg, best, dt, 指标=sub)
-    组 = (reg.keys.get(derived_key) or {}).get("_组")   # 兄弟项：同组前缀拼接
-    if 组 and f"{组}.{idn}" in reg.keys:
-        return _c_point(reg, f"{组}.{idn}", dt)
+    """派生表达式里的标识符 → 数值：①全限定 key；②按父系前缀查兄弟项。"""
+    if idn in reg.keys:
+        return _c_point(reg, idn, dt)
+    parts = derived_key.split(".")
+    for i in range(len(parts) - 1, 0, -1):
+        candidate = ".".join(parts[:i] + [idn])
+        if candidate in reg.keys:
+            return _c_point(reg, candidate, dt)
     return None
 
 
