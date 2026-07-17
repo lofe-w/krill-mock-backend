@@ -122,8 +122,14 @@ def main():
     ]
     ship_direct = api_series(SeriesQ(keys=ship_children,
                                      window={k: {"start": T, "end": T} for k in ship_children}))
+    ship_global = api_series(SeriesQ(keys=ship_children,
+                                     window={"start": T, "end": T}))
+    ship_group_global = api_series(SeriesQ(keys=["船舶信息模型"],
+                                           window={"start": T, "end": T}))
     assert set(ship_group["data"]) == set(ship_children), "父系前缀应展开为叶子 key 数据，不返回包装"
     assert ship_group["data"] == ship_direct["data"], "父系前缀查询应等同直接传所有叶子 key"
+    assert ship_global["data"] == ship_direct["data"], "全局 window 应等同逐 key window"
+    assert ship_group_global["data"] == ship_direct["data"], "父系前缀 + 全局 window 应继承到全部叶子 key"
     assert ship_group["data"]["船舶信息模型.船舶方位-经度"]["显示"] == "船舶方位-经度"
     sea_prefix = api_series(SeriesQ(keys=["船舶.海况"], window={"船舶.海况": {"start": T, "end": T}}))
     assert "船舶.海况.海水温度" in sea_prefix["data"]
@@ -136,15 +142,26 @@ def main():
     assert not any(k.startswith("3.") for k in catch_value["data"])
     passed.append("series/value 父系前缀展开(等同叶子keys) + 显示")
 
+    try:
+        api_series(SeriesQ(keys=ship_children, window={
+            "start": T,
+            "船舶信息模型.船舶方位-经度": {"start": T, "end": T},
+        }))
+        raise AssertionError("window 混用全局字段和逐 key 配置应报错")
+    except Exception as ex:
+        assert getattr(ex, "status_code", None) == 400
+        assert "不能混用" in str(getattr(ex, "detail", ""))
+    passed.append("series 全局 window + 混用校验")
+
     # 固定点数：区间分桶。查一年用 points=12 → 恰 12 点（自适应比例尺）
     sr = resolve(reg, "船舶.海况.海水温度",
                  start="2026-01-01 00:00:00", end="2026-12-31 00:00:00", points=12)
     assert len(sr["values"]) == 12, f"分桶点数={len(sr['values'])}"
-    # 默认点数=20：同跨度不传 points → ≤20 点
+    # 全局默认点数=20：同跨度不传 points → ≤20 点
     sr20 = resolve(reg, "船舶.海况.海水温度",
                    start="2026-01-01 00:00:00", end="2026-12-31 00:00:00")
-    assert len(sr20["values"]) <= 20, f"默认点数={len(sr20['values'])}"
-    passed.append(f"固定点数分桶(年查 points=12→{len(sr['values'])}点, 默认→{len(sr20['values'])}点)")
+    assert len(sr20["values"]) <= 20, f"全局默认点数={len(sr20['values'])}"
+    passed.append(f"固定点数分桶(年查 points=12→{len(sr['values'])}点, 全局默认→{len(sr20['values'])}点)")
 
     # 联调兼容层：内存构造旧 key alias，不改真实 YAML。旧 key 可解析到新 key，并产生 deprecated warning。
     reg.keys["测试.旧海水温度"] = {

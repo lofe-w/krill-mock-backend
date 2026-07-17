@@ -1,7 +1,7 @@
 """配置加载 + 静态自检。
 - 加载 config/registry/*.yaml → 内存注册表（key -> spec）
 - 加载 constraints/overrides/sources
-- 自检：引用/不变式涉及的 key 是否存在；默认点数/冲突校验"""
+- 自检：引用/不变式涉及的 key 是否存在；冲突校验"""
 import glob
 import os
 import re
@@ -182,14 +182,7 @@ def selfcheck(reg: Registry):
             report["unresolved"].append(ref)
     if reg.collisions:
         report["notes"].append(f"key 重名冲突(已忽略): {sorted(set(reg.collisions))}")
-    # 默认点数：仅许 C 表、正整数
-    bad_pts = [k for k, s in reg.keys.items()
-               if "默认点数" in s and (s.get("表") != "C"
-                  or not isinstance(s["默认点数"], int) or isinstance(s["默认点数"], bool)
-                  or s["默认点数"] <= 0)]
-    if bad_pts:
-        report["notes"].append(f"默认点数 非法(须 C 表正整数): {bad_pts}")
-    report["ok"] = not report["unresolved"] and not bad_pts and not reg.collisions
+    report["ok"] = not report["unresolved"] and not reg.collisions
     from collections import Counter
     report["by_table"] = dict(Counter(s.get("表") for s in reg.keys.values()))
     report["by_maturity"] = dict(Counter(s.get("成熟度") for s in reg.keys.values()))

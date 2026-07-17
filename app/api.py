@@ -73,18 +73,11 @@ class RecordsQ(BaseModel):
     filter: Optional[Dict[str, Any]] = None
 
 
-class WindowEntry(BaseModel):
-    """C·series 逐 key 的时间窗 + 采样点数。三者皆可选、逐条目自洽（见 _validate_series_window）。
-    用具名模型而非裸 dict，使 OpenAPI/Swagger 正确展示 start/end/points 字段。"""
-    model_config = ConfigDict(extra="forbid")   # 多余字段 → 422（避免静默放行）
-    start: Optional[str] = None                  # "YYYY-MM-DD HH:mm:ss"；与 end 成对
-    end: Optional[str] = None
-    points: Optional[int] = None                 # 区间重采样点数；缺省→配置 默认点数→全局 20
-
-
 class SeriesQ(BaseModel):
     # 三端点同构：keys + 一个按 key 作用域的 map。C 的轴是「时间」，故名 window（非 filter）。
-    # window: { "<key>": { "start"?, "end"?, "points"? } } —— 逐 key 自洽；缺省即回退。
+    # window 支持两种形态：
+    #   1) 全局：{ "start"?, "end"?, "points"? }，应用到本次 keys 展开的全部 C key。
+    #   2) 逐 key：{ "<key>": { "start"?, "end"?, "points"? } }，每个 key 独立配置。
     model_config = ConfigDict(json_schema_extra={"example": {
         "keys": ["船舶.海况.海水温度", "船舶.能耗.累计耗油量", "船舶.航行"],
         "window": {
@@ -94,7 +87,7 @@ class SeriesQ(BaseModel):
                                 "end": "2026-06-25 00:00:00"},
         }}})
     keys: List[str]
-    window: Optional[Dict[str, WindowEntry]] = None
+    window: Optional[Dict[str, Any]] = None
 
 
 def _filter_for(filter: Optional[Dict], key: str):
@@ -168,7 +161,7 @@ _WINDOW_FIELDS = {"start", "end", "points"}
 
 
 def _entry(e):
-    """window 条目归一为 {start,end,points} dict：兼容 pydantic WindowEntry 与裸 dict。"""
+    """window 条目归一为 {start,end,points} dict。"""
     if isinstance(e, dict):
         return e
     if hasattr(e, "model_dump"):
@@ -176,12 +169,59 @@ def _entry(e):
     return {f: getattr(e, f, None) for f in _WINDOW_FIELDS}
 
 
+def _window_mode(window: Optional[Dict[str, Any]]):
+    """识别 window 形态：none / global / per_key；混用全局字段与 key 字段直接 400。"""
+    if not window:
+        return "none"
+    if not isinstance(window, dict):
+        raise HTTPException(status_code=400, detail="window 须为对象。")
+    fields = set(window)
+    global_fields = fields & _WINDOW_FIELDS
+    if global_fields:
+        if fields <= _WINDOW_FIELDS:
+            return "global"
+        raise HTTPException(
+            status_code=400,
+            detail="window 不能混用全局字段(start/end/points)和逐 key 配置；请二选一。")
+    return "per_key"
+
+
+def _validate_window_entry(scope: str, raw):
+    """校验单个 window 条目，scope 用于错误提示。"""
+    if not isinstance(raw, dict) and not hasattr(raw, "model_dump"):
+        raise HTTPException(status_code=400, detail=f"{scope} 须为对象，且仅含 {_WINDOW_FIELDS}。")
+    if isinstance(raw, dict):
+        extra = set(raw) - _WINDOW_FIELDS
+        if extra:
+            raise HTTPException(status_code=400, detail=f"{scope} 含非法字段 {extra}；仅许 {_WINDOW_FIELDS}。")
+    e = _entry(raw)
+    s, en = e.get("start"), e.get("end")
+    if (s is None) != (en is None):
+        raise HTTPException(status_code=400,
+                            detail=f"{scope} 的 start/end 须成对：都不传=当前时刻；相等=单点；end>start=区间。")
+    if s is not None:
+        try:
+            sp, ep = parse_time(s), parse_time(en)
+        except ValueError as ex:
+            raise HTTPException(status_code=400, detail=str(ex))
+        if ep < sp:
+            raise HTTPException(status_code=400, detail=f"{scope} end 不得早于 start：{s}~{en}。")
+    p = e.get("points")
+    if p is not None and (not isinstance(p, int) or isinstance(p, bool) or p <= 0):
+        raise HTTPException(status_code=400, detail=f"{scope} points 须为正整数：{p}。")
+
+
 def _validate_series_window(window: Optional[Dict], keys: List[str]):
     """/api/series 与 /records 同构：keys + 按 key 作用域的 map（这里是 window）。
-    window: {key: {start?, end?, points?}}。逐条目自洽校验（无顶层共享默认、无 merge）：
-      ① key 须在 keys 内、且为已注册 C 表；② 条目仅许 {start,end,points}（多余字段 pydantic 已拒为 422）；
-      ③ start/end 成对且 end≥start；④ points 为正整数。任一不满足 → 400/422。"""
-    if not window:
+    支持两种形态：
+      ① 全局 window: {start?, end?, points?}，作用于全部展开后的 C key；
+      ② 逐 key window: {key: {start?, end?, points?}}，key 须在 keys 内且是 C 表 key/父系前缀。
+    两种形态不能混用。"""
+    mode = _window_mode(window)
+    if mode == "none":
+        return
+    if mode == "global":
+        _validate_window_entry("window", window)
         return
     for k, raw in window.items():
         if k not in keys:
@@ -191,25 +231,14 @@ def _validate_series_window(window: Optional[Dict], keys: List[str]):
             and ((REG.keys.get(k) or {}).get("表") != "C")
         ):
             raise HTTPException(status_code=400, detail=f"window 仅作用于 C 表 key 或 C 表父系前缀：{k}。")
-        if isinstance(raw, dict):
-            extra = set(raw) - _WINDOW_FIELDS
-            if extra:
-                raise HTTPException(status_code=400, detail=f"window[{k}] 含非法字段 {extra}；仅许 {_WINDOW_FIELDS}。")
-        e = _entry(raw)
-        s, en = e.get("start"), e.get("end")
-        if (s is None) != (en is None):
-            raise HTTPException(status_code=400,
-                                detail=f"window[{k}] 的 start/end 须成对：都不传=当前时刻；相等=单点；end>start=区间。")
-        if s is not None:
-            try:
-                sp, ep = parse_time(s), parse_time(en)
-            except ValueError as ex:
-                raise HTTPException(status_code=400, detail=str(ex))
-            if ep < sp:
-                raise HTTPException(status_code=400, detail=f"window[{k}] end 不得早于 start：{s}~{en}。")
-        p = e.get("points")
-        if p is not None and (not isinstance(p, int) or isinstance(p, bool) or p <= 0):
-            raise HTTPException(status_code=400, detail=f"window[{k}] points 须为正整数：{p}。")
+        _validate_window_entry(f"window[{k}]", raw)
+
+
+def _window_for(window: Optional[Dict[str, Any]], requested: str, actual: str):
+    """取实际 key 的 window：全局形态直接复用；逐 key 形态按请求 key/展开后 key 继承。"""
+    if _window_mode(window) == "global":
+        return _entry(window)
+    return _entry((window or {}).get(requested) or (window or {}).get(actual) or {})
 
 
 # 表 → 对外接口（与 _wrap 的 A→/value、B→/records、C→/series 一致）
@@ -277,7 +306,7 @@ def api_series(q: SeriesQ):
     _validate_series_window(q.window, q.keys)
     data = {}
     for requested, k in _expanded_request_pairs(q.keys, "C"):
-        e = _entry((q.window or {}).get(requested) or (q.window or {}).get(k) or {})
+        e = _window_for(q.window, requested, k)
         r = _wrap(k, resolve(REG, k, start=e.get("start"), end=e.get("end"),
                              points=e.get("points")), "C")
         if "error" in r:
@@ -285,7 +314,7 @@ def api_series(q: SeriesQ):
         elif "values" in r:
             data[k] = _series_payload(r)
         else:
-            data[k] = r              # note / 占位说明项
+            data[k] = r              # note / 占位项
     return _response(data, q.keys)
 
 

@@ -23,9 +23,9 @@ post "B·records ★金蝶真实标定：虾油检测（磷脂≈60.7/EPA16.2/DH
 
 # —— C 表：/api/series（批量时序）——
 # 寻址：扁平化后只用 keys（指标=独立全限定 key，无 metrics）。
-# 时间+精度：可选 window={key:{start?,end?,points?}}，逐 key 自洽，无顶层共享默认。
+# 时间+精度：可选 window={start?,end?,points?} 全局配置，或 window={key:{start?,end?,points?}} 逐 key 配置。
 #   start/end 都不传=当前时刻单点；相等=该时刻单点；end>start=区间。
-#   points 缺省→配置 默认点数→全局 20；区间按 N 桶自适应比例尺。
+#   points 缺省→全局 20；区间按 N 桶自适应比例尺。
 post "C·series 当前时刻：冻虾舱温度 + 海况叶子(海水温度)（无 window）" /api/series \
   '{"keys":["船舶.冻虾舱.温度","船舶.海况.海水温度"]}'
 

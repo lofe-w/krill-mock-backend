@@ -78,7 +78,7 @@ def align(dt: datetime, gmin: int) -> datetime:
     return EPOCH + timedelta(minutes=aligned)
 
 
-DEFAULT_POINTS = 20            # 全局硬默认点数（配置/请求都不给时）
+DEFAULT_POINTS = 20            # 全局硬默认点数（请求不给 points 时）
 MAX_POINTS = 2000             # clamp 上限（兼内存护栏）
 
 

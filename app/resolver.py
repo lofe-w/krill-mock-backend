@@ -181,11 +181,9 @@ def _emit(reg, key, value_fn, dt_point, rng, gmin, n=None, 量语义=None):
     return [one(dt) for dt in bucket_samples(rng[0], rng[1], gmin, n, 量语义 or "瞬时")]
 
 
-def _resolve_points(spec, points):
-    """N = 请求 points ?? 配置 默认点数 ?? 全局默认；clamp 到 [1, MAX_POINTS]。"""
-    n = points if points is not None else spec.get("默认点数")
-    if n is None:
-        n = DEFAULT_POINTS
+def _resolve_points(points):
+    """N = 请求 points ?? 全局默认；clamp 到 [1, MAX_POINTS]。"""
+    n = points if points is not None else DEFAULT_POINTS
     try:
         n = int(n)
     except (TypeError, ValueError):
@@ -233,7 +231,7 @@ def resolve(reg, key, filter=None, start=None, end=None, points=None):
     if table == "C":
         gmin = grid_minutes(spec.get("网格"))
         量语义 = spec.get("量语义")
-        n = _resolve_points(spec, points)
+        n = _resolve_points(points)
         # 时间模式由 start/end 表达（无独立 time 参数）：
         #   都不传 → 当前时刻单点；start==end → 该时刻单点；end>start → 区间。
         s, e = parse_time(start), parse_time(end)
@@ -265,6 +263,6 @@ def resolve(reg, key, filter=None, start=None, end=None, points=None):
                     "派生": expr, "values": _emit(reg, key, vf, dt_point, rng, gmin, n, 量语义)}
 
         return {"status": 200, "key": key, "表": "C",
-                "note": "占位/说明项，未配置规则（或真值采集待对接）"}
+                "note": "占位项，未配置规则（或真值采集待对接）"}
 
     return {"status": 500, "key": key, "msg": f"未知表: {table}"}

@@ -214,7 +214,7 @@ C 表的 value 有两类：
 
 - **每表一个接口、各自批量**（已实现）：`/api/value`(A)、`/api/records`(B)、`/api/series`(C)。
   A 直接给值；B 给（可多条）选中记录；C 给时序（不传 start/end=当前时刻单点、start==end=该时刻单点、end>start=区间）。
-- ★**三端点同构（D5/D6）：`keys` + 一个按 key 作用域的 map**——B 是 `filter`（选择轴），C 是 `window`（时间轴：`{key:{start?,end?,points?}}`）。**map 名随轴走、不复用**：时间是独立轴、不是 filter（§2），故 C 的逐 key map 绝不叫 filter。C **只用 `keys` 寻址**（无 `metrics`）；时间窗口与点数**逐 key 写进 `window`**，无顶层共享默认。`window[key].points` 控制区间固定点数（缺省→配置 `默认点数`→全局 20），后端自适应比例尺（《契约》§5.1）。
+- ★**三端点同构（D5/D6）：`keys` + 一个按轴命名的辅助参数**——B 是 `filter`（选择轴），C 是 `window`（时间轴）。**map 名随轴走、不复用**：时间是独立轴、不是 filter（§2），故 C 绝不叫 filter。C **只用 `keys` 寻址**（无 `metrics`）；时间窗口与点数写进 `window`，支持全局 `{start?,end?,points?}` 或逐 key `{key:{start?,end?,points?}}` 两种形态，不能混用。`points` 控制区间固定点数（缺省→全局 20），后端自适应比例尺（《契约》§5.1）。
 - **统一发生在实现层**（一个 resolver 服务三表），三个接口只是薄壳——**不把三种不同形状塞进一个信封**（那等于在接口层假装只有一种形状）。
 - **不做**单一 `/api/query` 大杂烩：A/B/C 形状不同，混在一个信封会让消费方每次判断形状，违背三表模型。
 - 最终"按屏取一大包"的形态（前端六接口）是 value/records/series 之上的**组合/兼容层**，待前端需求定型再加。
