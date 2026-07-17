@@ -150,6 +150,26 @@ def main():
                                         window={"start": T, "end": T}))
     assert "虾粉生产线【主要设备及运行状态参数】.流量秤实时读数" in onboard_series["data"]
     assert "冻虾产品检测数据.冻虾冻块中心温度" in onboard_series["data"]
+    land_value = api_value(ValueQ(keys=["虾油提取生产线【主要参数】", "虾油提取【主要设备及性能参数】",
+                                  "蛋白肽生产线【主要参数】", "蛋白肽【主要设备及性能参数】",
+                                  "陆地高值化利用大数据【桑基图】"]))
+    assert "虾油提取生产线【主要参数】.全脂虾粉日处理量" in land_value["data"]
+    assert "虾油提取【主要设备及性能参数】.逆流提取机组" in land_value["data"]
+    assert "蛋白肽生产线【主要参数】.脱脂虾粉日处理量" in land_value["data"]
+    assert "蛋白肽【主要设备及性能参数】.酶解罐" in land_value["data"]
+    assert "陆地高值化利用大数据【桑基图】.虾油生产【桑基图】" in land_value["data"]
+    land_series = api_series(SeriesQ(keys=["虾油提取【主要设备及运行状态参数】", "虾油生产线（生产数据）",
+                                      "脱脂虾粉产品检测", "成品虾油产品检测参数",
+                                      "蛋白肽【主要设备及运行状态参数】", "蛋白肽生产线（生产数据）",
+                                      "蛋白肽产品检测参数"],
+                                  window={"start": T, "end": T}))
+    assert "虾油提取【主要设备及运行状态参数】.逆流提取虾粉进料速度" in land_series["data"]
+    assert "虾油生产线（生产数据）.成品油产量" in land_series["data"]
+    assert "脱脂虾粉产品检测.脂肪" in land_series["data"]
+    assert "成品虾油产品检测参数.磷脂" in land_series["data"]
+    assert "蛋白肽【主要设备及运行状态参数】.酶解酶解温度" in land_series["data"]
+    assert "蛋白肽生产线（生产数据）.蛋白肽产量" in land_series["data"]
+    assert "蛋白肽产品检测参数.蛋白含量" in land_series["data"]
     passed.append("series/value 父系前缀展开(等同叶子keys) + 显示")
 
     try:
