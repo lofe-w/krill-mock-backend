@@ -140,6 +140,16 @@ def main():
     catch_value = api_value(ValueQ(keys=["船舶捕捞【产量信息】"]))
     assert "船舶捕捞【产量信息】.桁杆连续泵吸捕捞系统.主要参数" in catch_value["data"]
     assert not any(k.startswith("3.") for k in catch_value["data"])
+    onboard_value = api_value(ValueQ(keys=["虾粉生产线【主要参数：产量】", "虾粉生产线【主要设备及性能参数】",
+                                      "冻虾生产线【主要设备及性能参数】", "虾肉生产线【主要设备及性能参数】"]))
+    assert "虾粉生产线【主要参数：产量】.典型原虾日加工量" in onboard_value["data"]
+    assert "虾粉生产线【主要设备及性能参数】.称重输送带（流量称）" in onboard_value["data"]
+    assert "冻虾生产线【主要设备及性能参数】.水平自动冷冻机" in onboard_value["data"]
+    assert "虾肉生产线【主要设备及性能参数】.脱壳机" in onboard_value["data"]
+    onboard_series = api_series(SeriesQ(keys=["虾粉生产线【主要设备及运行状态参数】", "冻虾产品检测数据"],
+                                        window={"start": T, "end": T}))
+    assert "虾粉生产线【主要设备及运行状态参数】.流量秤实时读数" in onboard_series["data"]
+    assert "冻虾产品检测数据.冻虾冻块中心温度" in onboard_series["data"]
     passed.append("series/value 父系前缀展开(等同叶子keys) + 显示")
 
     try:
