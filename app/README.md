@@ -10,7 +10,7 @@
 | `generators.py` | 4 个 kind：`有界瞬时 / 累计 / 离散状态 / 航迹` |
 | `timegrid.py` | cron 网格解析、对齐、区间枚举（含降采样） |
 | `resolver.py` | 表分派(A/B/C) → 成熟度取值(人工固定/规则生成/真值采集fallback) → override → 组装 |
-| `api.py` | FastAPI 薄入口 `POST /api/query`、`GET /api/health` |
+| `api.py` | FastAPI 薄入口 `POST /api/value`、`POST /api/records`、`POST /api/series`、`GET /api/health` |
 | `main.py` | uvicorn 启动 |
 
 ## 运行
@@ -18,16 +18,16 @@
 pip install -r requirements.txt
 python -m tests.smoke          # 端到端纵切冒烟（不需 fastapi）
 python -m app.registry         # 打印静态自检报告
-uvicorn app.main:app --port 8000   # 起服务
-# curl -X POST localhost:8000/api/query -H 'Content-Type: application/json' -d '{"key":"船舶.信息"}'
+uvicorn app.main:app --port 8000   # 起服务；compose 对外映射为 http://localhost:6632
+# curl -X POST localhost:8000/api/value -H 'Content-Type: application/json' -d '{"keys":["船舶.信息"]}'
 ```
 
-## 已验证（tests/smoke.py，9/9 通过）
-- config 加载 + 静态自检：**55 个 key、引用完整无断链**（A13/B8/C34；人工固定21/规则生成34）。
+## 已验证（tests/smoke.py）
+- config 加载 + 静态自检：**662 个 key、引用完整无断链**（A244/B8/C410；人工固定252/规则生成410）。
 - A 端到端（船舶.信息）、B 端到端（溯源 value=`{类别,溯源链条}`、数据归各环节）。
 - C 有界瞬时：点查 + **确定性**（同输入同输出）+ **区间钳制** + 区间枚举（7 点）。
 - C 累计：**单调**。C 离散状态：枚举命中。航迹：派生 4 量（经纬度/航速/航向）。
-- B 多记录（设备台账分产线）。override 钩子就绪。
+- B 多记录（设备台账按设备拆条，支持 `所属产线/设备名称` 过滤）。override 钩子就绪。
+- API 层：父系前缀展开、全局/逐 key window、跨表同名 key、`qualified_key`、deprecated warning 兼容层。
 
-> 当前为"先纵切验证整条链"的最小实现：每表代表 key 已端到端跑通。
-> 待办：真值采集 provider（待 Q3/Q5）/ HTTP 层联调（沙箱无 fastapi，api.py 为薄包装，随真实环境联调）。
+> 当前为 `v1.0.3` 对外取数服务实现。待办：真值采集 provider（待 Q3/Q5）。

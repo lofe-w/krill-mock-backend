@@ -2,17 +2,17 @@
 # 验收用例：三个专用接口（/api/value /records /series）。先 `docker compose up -d --build`。
 # 用法：bash examples/queries.sh
 set -e
-H="${1:-http://localhost:8000}"
+H="${1:-http://localhost:6632}"
 # 使用侧 Token：与 .env 的 API_TOKEN_APP 一致（AUTH_ENABLED=false 时可留空）
 APP="${APP_TOKEN:-请填使用侧Token}"
 pp() { python3 -m json.tool --no-ensure-ascii 2>/dev/null || cat; }
 post() { echo -e "\n### $1"; curl -s -X POST "$H$2" -H 'Content-Type: application/json' -H "Authorization: Bearer $APP" -d "$3" | pp; }
 
-echo "### 健康+自检（公开，无需Token；selfcheck_ok=true, keys≈273, derivations=5）"; curl -s "$H/api/health" | pp
+echo "### 健康+自检（公开，无需Token；selfcheck_ok=true, keys≈662, derivations=5）"; curl -s "$H/api/health" | pp
 
 # —— A 表：/api/value（批量取值）——
-post "A·value 批量：船舶信息 + 虾油线设计能力" /api/value \
-  '{"keys":["船舶.信息","工厂.虾油线.设计能力"]}'
+post "A·value 批量：船舶信息 + 虾油提取生产线设计能力" /api/value \
+  '{"keys":["船舶.信息","工厂.虾油提取生产线.设计能力"]}'
 
 # —— B 表：/api/records（批量，可按 key 分别给 filter）——
 post "B·records 批量：溯源(虾油) + 仓储(工厂冷库) + 人员(磷虾船)" /api/records \
@@ -39,7 +39,7 @@ post "C·series ★固定点数：海水温度查一整年 points=12（自适应
   '{"keys":["船舶.海况.海水温度"],"window":{"船舶.海况.海水温度":{"start":"2026-01-01 00:00:00","end":"2026-12-31 00:00:00","points":12}}}'
 
 post "C·series ★派生：虾油得率（扁平叶子 key，应≈18% 金蝶真实出油率）" /api/series \
-  '{"keys":["工厂.虾油线.生产数据.虾油得率"],"window":{"工厂.虾油线.生产数据.虾油得率":{"start":"2026-06-18 12:00:00","end":"2026-06-18 12:00:00"}}}'
+  '{"keys":["工厂.虾油提取生产线.生产数据.虾油得率"],"window":{"工厂.虾油提取生产线.生产数据.虾油得率":{"start":"2026-06-18 12:00:00","end":"2026-06-18 12:00:00"}}}'
 
 post "C·series 派生：剩余燃油百分比（=剩余燃油/1000*100，当前时刻）" /api/series \
   '{"keys":["船舶.能耗.剩余燃油百分比"]}'
