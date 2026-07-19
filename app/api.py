@@ -102,9 +102,8 @@ def _same_table_descendants(key: str, want_table: str):
     key 可以是任意路径前缀。比如请求 `船舶` 到 /api/series 时，
     只展开 C 表下 `船舶.*` 的叶子 key，不混入 A/B。
     """
-    candidates = [k for k in REG.keys if k.startswith(key + ".")]
-    return [k for k in candidates
-            if (REG.keys.get(k) or {}).get("表") == want_table]
+    return [k for k in REG.by_table.get(want_table, {})
+            if k.startswith(key + ".")]
 
 
 def _expand_for_table(key: str, want_table: str):
@@ -114,8 +113,8 @@ def _expand_for_table(key: str, want_table: str):
     - 父系前缀：返回所有同表后代 key。
     - 找不到：返回原 key，让后续 _wrap 给出原有错误形状。
     """
-    spec = REG.keys.get(key)
-    if spec and spec.get("表") == want_table:
+    spec = REG.get(key, want_table)
+    if spec:
         return [key]
     descendants = _same_table_descendants(key, want_table)
     if descendants:
@@ -145,8 +144,8 @@ def _validate_records_filter(filter: Optional[Dict]):
         return
     bad = []
     for k, v in filter.items():
-        spec = REG.keys.get(k)
-        is_b_key = spec is not None and spec.get("表") == "B"
+        spec = REG.get(k, "B")
+        is_b_key = spec is not None
         is_b_prefix = bool(_same_table_descendants(k, "B"))
         if not isinstance(v, dict) or not (is_b_key or is_b_prefix):
             bad.append(k)
@@ -228,7 +227,7 @@ def _validate_series_window(window: Optional[Dict], keys: List[str]):
             raise HTTPException(status_code=400, detail=f"window 的 key 不在 keys 内：{k}。")
         if not _expand_for_table(k, "C") or (
             _expand_for_table(k, "C") == [k]
-            and ((REG.keys.get(k) or {}).get("表") != "C")
+            and (REG.get(k, "C") is None)
         ):
             raise HTTPException(status_code=400, detail=f"window 仅作用于 C 表 key 或 C 表父系前缀：{k}。")
         _validate_window_entry(f"window[{k}]", raw)
@@ -253,11 +252,11 @@ def _wrap(key, r, want_table):
     return r
 
 
-def _warnings_for(keys):
+def _warnings_for(keys, table):
     out = []
     seen = set()
     for k in keys:
-        for w in compatibility_warnings(REG, k):
+        for w in compatibility_warnings(REG, k, table):
             ident = (w.get("type"), w.get("key"), w.get("replaced_by"))
             if ident in seen:
                 continue
@@ -266,9 +265,9 @@ def _warnings_for(keys):
     return out
 
 
-def _response(data, keys):
+def _response(data, keys, table):
     resp = {"status": 200, "data": data}
-    warnings = _warnings_for(keys)
+    warnings = _warnings_for(keys, table)
     if warnings:
         resp["warnings"] = warnings
     return resp
@@ -286,9 +285,9 @@ def _series_payload(r):
 def api_value(q: ValueQ):
     data = {}
     for requested, k in _expanded_request_pairs(q.keys, "A"):
-        r = _wrap(k, resolve(REG, k), "A")
+        r = _wrap(k, resolve(REG, k, table="A"), "A")
         data[k] = r if "error" in r else r.get("value")
-    return _response(data, q.keys)
+    return _response(data, q.keys, "A")
 
 
 @app.post("/api/records", dependencies=[Depends(require_app)])
@@ -296,9 +295,10 @@ def api_records(q: RecordsQ):
     _validate_records_filter(q.filter)
     data = {}
     for requested, k in _expanded_request_pairs(q.keys, "B"):
-        r = _wrap(k, resolve(REG, k, filter=_filter_for(q.filter, requested) or _filter_for(q.filter, k)), "B")
+        r = _wrap(k, resolve(REG, k, filter=_filter_for(q.filter, requested) or _filter_for(q.filter, k),
+                             table="B"), "B")
         data[k] = r if "error" in r else r.get("data")
-    return _response(data, q.keys)
+    return _response(data, q.keys, "B")
 
 
 @app.post("/api/series", dependencies=[Depends(require_app)])
@@ -308,14 +308,14 @@ def api_series(q: SeriesQ):
     for requested, k in _expanded_request_pairs(q.keys, "C"):
         e = _window_for(q.window, requested, k)
         r = _wrap(k, resolve(REG, k, start=e.get("start"), end=e.get("end"),
-                             points=e.get("points")), "C")
+                             points=e.get("points"), table="C"), "C")
         if "error" in r:
             data[k] = r
         elif "values" in r:
             data[k] = _series_payload(r)
         else:
             data[k] = r              # note / 占位项
-    return _response(data, q.keys)
+    return _response(data, q.keys, "C")
 
 
 # —— 公开：存活探测 ——
@@ -332,10 +332,11 @@ def health():
 @app.get("/api/keys", dependencies=[Depends(require_ops)])
 def list_keys():
     return {"status": 200, "data": [{"key": k, "表": s.get("表"),
+                                     "qualified_key": f"{s.get('表')}:{k}",
                                      "接口": _接口_BY_表.get(s.get("表")),
                                      "成熟度": s.get("成熟度"),
                                      **contract_meta(s)}
-                                    for k, s in REG.keys.items()]}
+                                    for k, s in REG.all_items()]}
 
 
 @app.post("/api/reload", dependencies=[Depends(require_ops)])

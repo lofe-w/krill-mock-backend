@@ -5,6 +5,7 @@ import ast
 import operator
 import re
 from datetime import datetime
+from .registry import _ref_parts, _ref_display
 from .timegrid import (parse_time, grid_minutes, align, bucket_samples,
                        to_min, EPOCH, DEFAULT_POINTS, MAX_POINTS, now_local)
 from .generators import GENERATORS
@@ -51,7 +52,7 @@ def _current_season(reg, dt):
         dt = now_local()
     if getattr(dt, "tzinfo", None) is not None:
         dt = dt.replace(tzinfo=None)
-    seasons = (reg.keys.get("渔季") or {}).get("value", []) or []
+    seasons = (reg.get("渔季", "A") or {}).get("value", []) or []
     best_past, best_past_st = None, None
     for s in seasons:
         try:
@@ -102,7 +103,7 @@ def _gen_point(rule, key, dt, gmin, reg):
 
 def _c_point(reg, key, dt):
     """直接算一个 C 规则点（供派生/引用取标量；不递归派生）。"""
-    spec = reg.keys.get(key)
+    spec = reg.get(key, "C")
     if not spec or spec.get("表") != "C":
         return None
     gmin = grid_minutes(spec.get("网格"))
@@ -114,12 +115,12 @@ def _c_point(reg, key, dt):
 
 def _resolve_ident(reg, derived_key, idn, dt):
     """派生表达式里的标识符 → 数值：①全限定 key；②按父系前缀查兄弟项。"""
-    if idn in reg.keys:
+    if reg.get(idn, "C"):
         return _c_point(reg, idn, dt)
     parts = derived_key.split(".")
     for i in range(len(parts) - 1, 0, -1):
         candidate = ".".join(parts[:i] + [idn])
-        if candidate in reg.keys:
+        if reg.get(candidate, "C"):
             return _c_point(reg, candidate, dt)
     return None
 
@@ -191,25 +192,29 @@ def _resolve_points(points):
     return max(1, min(n, MAX_POINTS))
 
 
-def _follow_alias(reg, key):
+def _follow_alias(reg, key, table=None):
     """alias_of 兼容旧 key：旧 key 可透明解析到新 key，避免前端联调期突然 404。"""
     seen = []
     cur = key
+    cur_table = table
     while True:
-        if cur in seen:
-            return cur, None, f"alias_of 存在循环: {' -> '.join(seen + [cur])}"
-        seen.append(cur)
-        spec = reg.keys.get(cur)
+        ident = (cur_table, cur)
+        if ident in seen:
+            path = " -> ".join(f"{t}:{k}" for t, k in seen + [ident])
+            return cur, cur_table, None, f"alias_of 存在循环: {path}"
+        seen.append(ident)
+        spec = reg.get(cur, cur_table)
         if spec is None:
-            return cur, None, None
+            return cur, cur_table, None, None
         nxt = spec.get("alias_of")
         if not nxt:
-            return cur, spec, None
-        cur = nxt
+            return cur, cur_table or spec.get("表"), spec, None
+        next_table, next_key = _ref_parts(nxt, cur_table or spec.get("表"))
+        cur, cur_table = next_key, next_table
 
 
-def resolve(reg, key, filter=None, start=None, end=None, points=None):
-    key, spec, alias_error = _follow_alias(reg, key)
+def resolve(reg, key, filter=None, start=None, end=None, points=None, table=None):
+    key, table, spec, alias_error = _follow_alias(reg, key, table)
     if alias_error:
         return {"status": 404, "key": key, "msg": alias_error}
     if spec is None:
@@ -254,8 +259,9 @@ def resolve(reg, key, filter=None, start=None, end=None, points=None):
                 resp["note"] = "真值采集·当前用 fallback 规则（待真实源就绪切换）"
             return resp
         # 派生（得率/百分比；表达式标识符按全限定 key 或同组兄弟项解析）
-        if spec.get("派生") or key in reg.derivations:
-            expr = reg.derivations.get(key) or spec.get("派生")
+        derivation_key = (table, key)
+        if spec.get("派生") or derivation_key in reg.derivations:
+            expr = reg.derivations.get(derivation_key) or spec.get("派生")
             rngc = spec.get("区间")
             vf = lambda dt: eval_derived(reg, key, expr, dt, rngc)
             return {"status": 200, "key": key, "表": "C", "显示": spec.get("显示"),

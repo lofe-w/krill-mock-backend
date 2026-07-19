@@ -111,7 +111,7 @@ def main():
     passed.append("同一事实只建一处(车间外大气=工厂.天气)")
 
     # /api/series 支持把父系前缀展开成叶子 key，响应形状等同直接传所有叶子 key；显示 随叶子 key 返回。
-    from app.api import api_series, api_value, SeriesQ, ValueQ
+    from app.api import api_series, api_value, api_records, list_keys, SeriesQ, ValueQ, RecordsQ
     ship_group = api_series(SeriesQ(keys=["船舶信息模型"],
                                     window={"船舶信息模型": {"start": T, "end": T}}))
     ship_children = [
@@ -174,7 +174,7 @@ def main():
     passed.append(f"固定点数分桶(年查 points=12→{len(sr['values'])}点, 全局默认→{len(sr20['values'])}点)")
 
     # 联调兼容层：内存构造旧 key alias，不改真实 YAML。旧 key 可解析到新 key，并产生 deprecated warning。
-    reg.keys["测试.旧海水温度"] = {
+    reg.add({
         "key": "测试.旧海水温度",
         "表": "C",
         "alias_of": "船舶.海况.海水温度",
@@ -184,15 +184,34 @@ def main():
             "replaced_by": "船舶.海况.海水温度",
             "reason": "联调兼容层测试",
         },
-    }
+    })
     old = resolve(reg, "测试.旧海水温度", start=T, end=T)
     new = resolve(reg, "船舶.海况.海水温度", start=T, end=T)
     assert old["status"] == 200 and old["values"] == new["values"], "alias_of 应透明解析到目标 key"
     warns = compatibility_warnings(reg, "测试.旧海水温度")
-    meta = contract_meta(reg.keys["测试.旧海水温度"])
+    meta = contract_meta(reg.get("测试.旧海水温度", "C"))
     assert warns and warns[0]["type"] == "deprecated_key"
     assert meta["deprecated"] is True and meta["replaced_by"] == "船舶.海况.海水温度"
     passed.append("联调兼容层(alias_of/deprecated 元信息)")
+
+    # 跨表同名：外部 key 可以复用，接口表决定解析到哪一条；/api/keys 用 qualified_key 做唯一身份。
+    import app.api as api_mod
+    api_mod.REG.add({"key": "测试.跨表同名", "表": "A", "成熟度": "人工固定", "value": {"来源": "A"}})
+    api_mod.REG.add({"key": "测试.跨表同名", "表": "B", "成熟度": "人工固定",
+                     "filter": ["类型"], "条目": [{"filter": {"类型": "B"}, "value": {"来源": "B"}}]})
+    api_mod.REG.add({"key": "测试.跨表同名", "表": "C", "成熟度": "规则生成",
+                     "量语义": "瞬时", "网格": "0 * * * *", "单位": "℃",
+                     "规则": {"kind": "有界瞬时", "基线": 10, "幅度": 0, "区间": [10, 10]}})
+    same_a = api_value(ValueQ(keys=["测试.跨表同名"]))
+    same_b = api_records(RecordsQ(keys=["测试.跨表同名"], filter={"测试.跨表同名": {"类型": "B"}}))
+    same_c = api_series(SeriesQ(keys=["测试.跨表同名"], window={"start": T, "end": T}))
+    assert same_a["data"]["测试.跨表同名"]["来源"] == "A"
+    assert same_b["data"]["测试.跨表同名"][0]["value"]["来源"] == "B"
+    assert same_c["data"]["测试.跨表同名"]["values"][0]["value"] == 10
+    key_rows = [r for r in list_keys()["data"] if r["key"] == "测试.跨表同名"]
+    assert sorted(r["qualified_key"] for r in key_rows) == [
+        "A:测试.跨表同名", "B:测试.跨表同名", "C:测试.跨表同名"]
+    passed.append("跨表同名 key(接口按表解析 + qualified_key)")
 
     # 累计型分桶取桶右端：单调不减
     cum = resolve(reg, "船舶.捕捞系统.累计产量.泵吸",
