@@ -231,17 +231,17 @@
   条目:
     - filter: { 所属: 磷虾船 }
       value:
-        - { 监控ID: cam-deck, 监控名称: 甲板监控, rtsp: "rtsp://localhost:8554/cam-deck", hls: "http://localhost:8888/cam-deck/index.m3u8", 所属: 磷虾船 }
-        - { 监控ID: cam-catch, 监控名称: 捕捞作业区, rtsp: "rtsp://localhost:8554/cam-catch", hls: "http://localhost:8888/cam-catch/index.m3u8", 所属: 磷虾船 }
-        - { 监控ID: cam-krillmeal, 监控名称: 虾粉加工车间, rtsp: "rtsp://localhost:8554/cam-krillmeal", hls: "http://localhost:8888/cam-krillmeal/index.m3u8", 所属: 磷虾船 }
-        - { 监控ID: cam-coldhold, 监控名称: 冷冻舱, rtsp: "rtsp://localhost:8554/cam-coldhold", hls: "http://localhost:8888/cam-coldhold/index.m3u8", 所属: 磷虾船 }
+        - { 监控ID: cam-deck, 监控名称: 甲板监控, rtsp: "rtsp://218.206.120.76:6631/cam-deck", hls: "http://218.206.120.76:6630/cam-deck/index.m3u8", 所属: 磷虾船 }
+        - { 监控ID: cam-catch, 监控名称: 捕捞作业区, rtsp: "rtsp://218.206.120.76:6631/cam-catch", hls: "http://218.206.120.76:6630/cam-catch/index.m3u8", 所属: 磷虾船 }
+        - { 监控ID: cam-krillmeal, 监控名称: 虾粉加工车间, rtsp: "rtsp://218.206.120.76:6631/cam-krillmeal", hls: "http://218.206.120.76:6630/cam-krillmeal/index.m3u8", 所属: 磷虾船 }
+        - { 监控ID: cam-coldhold, 监控名称: 冷冻舱, rtsp: "rtsp://218.206.120.76:6631/cam-coldhold", hls: "http://218.206.120.76:6630/cam-coldhold/index.m3u8", 所属: 磷虾船 }
         - { 监控名称: 视频会议, 地址: "https://meeting.example.com/room/krill-ship", 所属: 磷虾船 }
     - filter: { 所属: 工厂 }
       value:
-        - { 监控ID: cam-gate, 监控名称: 厂区入口, rtsp: "rtsp://localhost:8554/cam-gate", hls: "http://localhost:8888/cam-gate/index.m3u8", 所属: 工厂 }
-        - { 监控ID: cam-oil, 监控名称: 虾油车间, rtsp: "rtsp://localhost:8554/cam-oil", hls: "http://localhost:8888/cam-oil/index.m3u8", 所属: 工厂 }
-        - { 监控ID: cam-peptide, 监控名称: 蛋白肽车间, rtsp: "rtsp://localhost:8554/cam-peptide", hls: "http://localhost:8888/cam-peptide/index.m3u8", 所属: 工厂 }
-        - { 监控ID: cam-warehouse, 监控名称: 成品仓库, rtsp: "rtsp://localhost:8554/cam-warehouse", hls: "http://localhost:8888/cam-warehouse/index.m3u8", 所属: 工厂 }
+        - { 监控ID: cam-gate, 监控名称: 厂区入口, rtsp: "rtsp://218.206.120.76:6631/cam-gate", hls: "http://218.206.120.76:6630/cam-gate/index.m3u8", 所属: 工厂 }
+        - { 监控ID: cam-oil, 监控名称: 虾油车间, rtsp: "rtsp://218.206.120.76:6631/cam-oil", hls: "http://218.206.120.76:6630/cam-oil/index.m3u8", 所属: 工厂 }
+        - { 监控ID: cam-peptide, 监控名称: 蛋白肽车间, rtsp: "rtsp://218.206.120.76:6631/cam-peptide", hls: "http://218.206.120.76:6630/cam-peptide/index.m3u8", 所属: 工厂 }
+        - { 监控ID: cam-warehouse, 监控名称: 成品仓库, rtsp: "rtsp://218.206.120.76:6631/cam-warehouse", hls: "http://218.206.120.76:6630/cam-warehouse/index.m3u8", 所属: 工厂 }
 
 # ============================================================
 # A · 渔季
