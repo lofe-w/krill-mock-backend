@@ -71,6 +71,12 @@ def main():
     assert len(c1r["values"]) == 7, f"区间网格点数={len(c1r['values'])}"   # 每小时, 0..6 含端点
     passed.append(f"C 区间枚举({len(c1r['values'])}点)")
 
+    c1d = resolve(reg, "船舶.能耗.剩余燃油", start="2026-06-18", end="2026-06-18", points=24)
+    assert len(c1d["values"]) == 24, f"日期-only 应表示全天区间，实际点数={len(c1d['values'])}"
+    assert c1d["values"][0]["time"] == "2026-06-18 00:00:00"
+    assert c1d["values"][-1]["time"] == "2026-06-18 23:00:00"
+    passed.append("C 日期-only window(同日=全天区间)")
+
     # C 累计（单调 + 确定性）
     c2a = resolve(reg, "船舶.捕捞系统.累计产量.泵吸", start="2026-06-18 12:00:00", end="2026-06-18 12:00:00")
     c2b = resolve(reg, "船舶.捕捞系统.累计产量.泵吸", start="2026-06-18 18:00:00", end="2026-06-18 18:00:00")

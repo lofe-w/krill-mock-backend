@@ -200,7 +200,7 @@ def _validate_window_entry(scope: str, raw):
                             detail=f"{scope} 的 start/end 须成对：都不传=当前时刻；相等=单点；end>start=区间。")
     if s is not None:
         try:
-            sp, ep = parse_time(s), parse_time(en)
+            sp, ep = parse_time(s), parse_time(en, end_of_day=True)
         except ValueError as ex:
             raise HTTPException(status_code=400, detail=str(ex))
         if ep < sp:

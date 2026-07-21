@@ -152,23 +152,36 @@ def contract_meta(spec):
 
 def load() -> Registry:
     reg = Registry()
-    for path in sorted(glob.glob(os.path.join(CONFIG, "registry", "*.yaml"))):
+    registry_paths = (
+        glob.glob(os.path.join(CONFIG, "registry", "*.yaml")) +
+        glob.glob(os.path.join(CONFIG, "registry", "*.txt"))
+    )
+    for path in sorted(registry_paths):
         for doc in _load_yaml(path):
             if not isinstance(doc, list):
                 continue
             for e in doc:
                 if isinstance(e, dict) and "key" in e:
                     reg.add(e)
-    cpath = os.path.join(CONFIG, "constraints.yaml")
-    if os.path.exists(cpath):
+    cpath = next((p for p in (
+        os.path.join(CONFIG, "constraints.yaml"),
+        os.path.join(CONFIG, "constraints.txt"),
+    ) if os.path.exists(p)), None)
+    if cpath:
         docs = _load_yaml(cpath)
         reg.constraints = docs[0] if docs and isinstance(docs[0], dict) else {}
-    opath = os.path.join(CONFIG, "overrides.yaml")
-    if os.path.exists(opath):
+    opath = next((p for p in (
+        os.path.join(CONFIG, "overrides.yaml"),
+        os.path.join(CONFIG, "overrides.txt"),
+    ) if os.path.exists(p)), None)
+    if opath:
         docs = _load_yaml(opath)
         reg.overrides = (docs[0] or {}).get("overrides", []) if docs else []
-    spath = os.path.join(CONFIG, "sources.yaml")
-    if os.path.exists(spath):
+    spath = next((p for p in (
+        os.path.join(CONFIG, "sources.yaml"),
+        os.path.join(CONFIG, "sources.txt"),
+    ) if os.path.exists(p)), None)
+    if spath:
         docs = _load_yaml(spath)
         reg.sources = docs[0] if docs and isinstance(docs[0], dict) else {}
     reg.derivations = _build_derivations(reg.constraints)

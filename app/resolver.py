@@ -239,7 +239,7 @@ def resolve(reg, key, filter=None, start=None, end=None, points=None, table=None
         n = _resolve_points(points)
         # 时间模式由 start/end 表达（无独立 time 参数）：
         #   都不传 → 当前时刻单点；start==end → 该时刻单点；end>start → 区间。
-        s, e = parse_time(start), parse_time(end)
+        s, e = parse_time(start), parse_time(end, end_of_day=True)
         if s is None and e is None:
             dt_point, rng = None, (None, None)          # 当前时刻
         elif s == e:

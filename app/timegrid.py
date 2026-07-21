@@ -38,17 +38,23 @@ def now_local() -> datetime:
     return datetime.now(tz).replace(tzinfo=None)
 
 
-def parse_time(s):
+def parse_time(s, end_of_day: bool = False):
     if s is None or s == "":
         return None
     if isinstance(s, datetime):
         return s
     s = str(s).strip()
-    for fmt in (FMT_DT, FMT_D):
-        try:
-            return datetime.strptime(s, fmt)
-        except ValueError:
-            continue
+    try:
+        return datetime.strptime(s, FMT_DT)
+    except ValueError:
+        pass
+    try:
+        dt = datetime.strptime(s, FMT_D)
+        if end_of_day:
+            return dt.replace(hour=23, minute=59, second=59)
+        return dt
+    except ValueError:
+        pass
     raise ValueError(f"无法解析时间: {s}")
 
 
